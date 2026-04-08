@@ -1,0 +1,4 @@
+anthropic>=0.42.0
+pandas>=2.0.0
+streamlit>=1.30.0
+websockets>=12.0
