@@ -270,6 +270,18 @@ def _summarize_context(ctx: dict) -> dict:
         summary[f"{tf_label}_kill_zone"] = tf_data.get("kill_zone")
         pd_zone = tf_data.get("premium_discount", {})
         summary[f"{tf_label}_zone"] = pd_zone.get("zone")
+        # New fields (additive — old entries without these are unaffected)
+        pdhl = tf_data.get("previous_high_low", {})
+        if pdhl.get("pdh") is not None:
+            summary[f"{tf_label}_pdh"] = pdhl["pdh"]
+        if pdhl.get("pdl") is not None:
+            summary[f"{tf_label}_pdl"] = pdhl["pdl"]
+        if pdhl.get("pwh") is not None:
+            summary[f"{tf_label}_pwh"] = pdhl["pwh"]
+        if pdhl.get("pwl") is not None:
+            summary[f"{tf_label}_pwl"] = pdhl["pwl"]
+        summary[f"{tf_label}_mss_count"] = len(tf_data.get("mss_events", []))
+        summary[f"{tf_label}_silver_bullet"] = tf_data.get("silver_bullet")
     return summary
 
 

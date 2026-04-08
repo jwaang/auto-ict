@@ -24,6 +24,12 @@ py main.py stats
 # Show recent journal entries
 py main.py journal --limit 20
 
+# Backtest on historical 1-minute OHLCV data
+py main.py backtest path/to/ohlcv-1m.csv
+py main.py backtest data.csv --start 2025-04-07 --end 2025-07-01
+py main.py backtest data.csv --min-score 50 --balance 50000
+py main.py backtest data.csv --step 8 --save logs/my_backtest.json
+
 # Start real-time WebSocket position monitor (runs continuously)
 py monitor.py
 
@@ -45,25 +51,28 @@ py run.py
 ### Data Flow
 
 ```
-Yahoo Finance (daily/1h/15m OHLC)
-  → ict/confluence.py (runs all 8 ICT detectors)
+Yahoo Finance (daily/4h/1h/15m OHLC)
+  → ict/confluence.py (runs all 8 ICT detectors across 4 timeframes)
   → ai/prompt.py (builds Claude prompt with all ICT levels)
   → ai/analyst.py (calls Claude Code CLI via subprocess)
-  → trading/risk.py (validates R:R, position size, drawdown)
-  → trading/positions.py (opens paper trade)
-  → journal/logger.py (logs to logs/trades.json)
-  → monitor.py (Alpaca WebSocket watches for SL/TP fills)
+  → Claude returns: LONG/SHORT, CONDITIONAL_LONG/SHORT, or NO_TRADE
+  → If immediate: trading/risk.py validates → positions.py opens trade
+  → If conditional: journal logs entry zones → monitor.py watches for price to enter zones
+  → monitor.py: Alpaca WebSocket streams minute bars → checks SL/TP + conditional zone entry
+  → On zone entry: ict/confirmation.py checks LTF confirmation (CHoCH, displacement, etc.)
+  → If confirmed: auto-opens paper trade with risk validation
 ```
 
 ### Module Responsibilities
 
 | Module | Key File | Does |
 |--------|----------|------|
-| `data/` | `yahoo.py`, `alpaca.py` | OHLC fetching (Yahoo REST + Alpaca REST/WebSocket) |
+| `data/` | `yahoo.py`, `alpaca.py`, `historical.py` | OHLC fetching (Yahoo REST + Alpaca REST/WebSocket) + historical CSV loader |
 | `ict/` | `confluence.py` | Orchestrates all 8 ICT detectors, scores setups 0-100 |
 | `ai/` | `analyst.py` | Calls Claude Code CLI (`claude -p`), parses JSON response |
 | `trading/` | `risk.py`, `positions.py`, `account.py` | Paper trade lifecycle, risk validation, position sizing |
 | `journal/` | `logger.py` | JSON trade log with ICT context snapshots for re-analysis |
+| `backtest/` | `engine.py`, `rules.py`, `report.py` | Walk-forward backtesting engine with rule-based decisions |
 | `ui/` | `app.py` | Streamlit dashboard (4 tabs: dashboard, analysis, history, stats) |
 
 ### ICT Detection Engine (`ict/`)
@@ -78,6 +87,16 @@ Each detector is a separate module returning dicts. `confluence.py` orchestrates
 - `killzones.py` — London/NY/Asian session time checks
 - `fib.py` — Premium/Discount zones + OTE (61.8-79% Fibonacci)
 - `candles.py` — ATR, body size, range helpers
+- `confirmation.py` — Multi-TF entry confirmation (CHoCH, displacement, rejection wicks, FVG formation)
+
+### Conditional Entry System
+
+AI can output `CONDITIONAL_LONG`/`CONDITIONAL_SHORT` with prioritized entry zones instead of immediate trades. Each zone specifies price range, zone type (OB/FVG/OTE), stop loss, take profit, R:R, and what LTF confirmation is needed. The monitor watches for price to enter these zones, then runs `ict/confirmation.py` to check for entry signals on the appropriate confirmation timeframe.
+
+Confirmation timeframe scales with zone origin:
+- 4H zone → requires 1H confirmation (CHoCH or displacement, score >= 3)
+- 1H zone → requires 15M confirmation (score >= 2)
+- 15M zone → requires 15M confirmation (score >= 2)
 
 ### Confluence Scoring
 
@@ -94,7 +113,7 @@ Uses Claude Code CLI (`claude -p`), NOT the Anthropic SDK directly. This runs on
 
 | Source | Used For | Auth |
 |--------|----------|------|
-| Yahoo Finance | Multi-timeframe OHLC (daily, 1h, 15m) | None (urllib, unauthenticated) |
+| Yahoo Finance | Multi-timeframe OHLC (daily, 1h→4h aggregated, 1h, 15m) | None (urllib, unauthenticated) |
 | Alpaca Markets | Real-time WebSocket minute bars for position monitoring | Free API key (`.env`) |
 
 ## Credentials (`.env`)
@@ -116,6 +135,17 @@ Claude Code CLI authentication is handled by the user's existing login.
 
 Yahoo Finance uses `BTC-USD`, Alpaca uses `BTC/USD`. Conversion helpers in `config.py`: `ticker_to_alpaca()` and `alpaca_to_ticker()`.
 
+## Multi-Timeframe Analysis
+
+| Timeframe | Label | Source | Purpose |
+|-----------|-------|--------|---------|
+| Daily | `bias` | Yahoo `1d/6mo` | HTF market structure bias |
+| 4H | `swing` | Yahoo `1h/1mo` aggregated to 4H | Swing structure, OBs, displacement legs |
+| 1H | `setup` | Yahoo `1h/1mo` | Setup identification (FVGs, OBs) |
+| 15M | `entry` | Yahoo `15m/5d` | Entry timing, OTE, kill zones |
+
+4H candles are synthesized by aggregating 1H bars (Yahoo has no native 4H interval). The `aggregate_to` key in `config.TIMEFRAMES` controls this.
+
 ## Risk Management Rules
 
 Enforced in `trading/risk.py`:
@@ -123,6 +153,8 @@ Enforced in `trading/risk.py`:
 - Max 3 concurrent positions, SL must be 0.1-5% from entry
 - 10% drawdown from peak = circuit breaker (trading paused)
 - If Claude says NO_TRADE, it's respected unconditionally
+- Open position count is loaded from `journal/logger.py` (not in-memory) to survive process restarts
+- Balance is derived from the most recently *closed* trade (sorted by `timestamp_closed`)
 
 ## Background Processes
 

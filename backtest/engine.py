@@ -1,0 +1,245 @@
+"""Walk-forward backtesting engine for ICT strategies.
+
+Iterates through entry-timeframe bars, runs the full ICT detection pipeline
+at each step with point-in-time data (no look-ahead bias), and simulates
+trades using the existing position/risk management modules.
+"""
+
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+import pandas as pd
+
+from backtest.rules import decide_trade
+from config import BACKTEST_SMC_SWING_LENGTH, MIN_CONFLUENCE_SCORE, STARTING_BALANCE
+from data.historical import build_multi_timeframe, get_windowed_data
+from ict.confluence import analyze_multi_timeframe
+from ict.smc_adapter import set_swing_length_override
+from trading.account import Account
+from trading.positions import Position, PositionManager
+from trading.risk import validate_trade
+
+
+@dataclass
+class BacktestResult:
+    """Results from a backtest run."""
+    trades: list[dict] = field(default_factory=list)
+    equity_curve: list[dict] = field(default_factory=list)
+    no_trade_decisions: int = 0
+    low_confluence_skips: int = 0
+    bars_processed: int = 0
+    start_time: str = ""
+    end_time: str = ""
+    duration_seconds: float = 0
+    starting_balance: float = 0
+    final_balance: float = 0
+    parameters: dict = field(default_factory=dict)
+
+
+def run_backtest(
+    df_1m: pd.DataFrame,
+    starting_balance: float = STARTING_BALANCE,
+    min_score: int = MIN_CONFLUENCE_SCORE,
+    ticker: str = "ES",
+    step_bars: int = 4,
+    warmup_bars: int = 200,
+    progress_every: int = 500,
+) -> BacktestResult:
+    """Run a walk-forward backtest on historical 1-minute data.
+
+    Args:
+        df_1m: 1-minute OHLCV DataFrame (continuous contract)
+        starting_balance: Initial account balance
+        min_score: Minimum confluence score to take trades
+        ticker: Ticker symbol for display/logging
+        step_bars: Process every Nth entry bar (default 4 = every hour on 15m bars)
+        warmup_bars: Minimum entry bars before starting to trade
+        progress_every: Print progress every N bars
+
+    Returns:
+        BacktestResult with all trades, equity curve, and stats
+    """
+    t0 = time.time()
+
+    # Use smaller swing_length for backtesting (less warmup needed).
+    # Wrapped in try/finally to guarantee restoration even on exceptions.
+    set_swing_length_override(BACKTEST_SMC_SWING_LENGTH)
+    try:
+        return _run_backtest_inner(
+            df_1m, starting_balance, min_score, ticker,
+            step_bars, warmup_bars, progress_every, t0,
+        )
+    finally:
+        set_swing_length_override(None)
+
+
+def _run_backtest_inner(
+    df_1m, starting_balance, min_score, ticker,
+    step_bars, warmup_bars, progress_every, t0,
+) -> BacktestResult:
+    """Inner backtest loop, separated so run_backtest can wrap in try/finally."""
+    # Build all timeframes from 1m data
+    print(f"  Resampling 1m data to all timeframes...")
+    all_tf = build_multi_timeframe(df_1m)
+    entry_bars = all_tf["entry"]
+
+    print(f"  Entry bars: {len(entry_bars)}, Warmup: {warmup_bars}, Step: {step_bars}")
+    print(f"  Bars to process: ~{(len(entry_bars) - warmup_bars) // step_bars}")
+
+    # Initialize account and position manager
+    account = Account(starting_balance=starting_balance)
+    pm = PositionManager()
+
+    result = BacktestResult(
+        starting_balance=starting_balance,
+        parameters={
+            "min_score": min_score,
+            "step_bars": step_bars,
+            "warmup_bars": warmup_bars,
+            "ticker": ticker,
+        },
+    )
+
+    result.equity_curve.append({
+        "timestamp": str(entry_bars.iloc[warmup_bars]["timestamp"]),
+        "balance": starting_balance,
+        "event": "start",
+    })
+
+    # Walk forward through entry bars
+    for i in range(warmup_bars, len(entry_bars)):
+        bar = entry_bars.iloc[i]
+        current_time = bar["timestamp"]
+        candle = {"high": bar["high"], "low": bar["low"], "close": bar["close"]}
+
+        # Check open positions for SL/TP fills on EVERY bar
+        fills = pm.check_fills(candle)
+        for fill in fills:
+            pnl = fill["pnl_dollars"]
+            account.update_balance(pnl)
+            fill["timestamp"] = str(current_time)
+            # Find the original trade in results and update it
+            for t in result.trades:
+                if t["id"] == fill["position_id"]:
+                    t["exit_price"] = fill["exit_price"]
+                    t["exit_reason"] = fill["exit_reason"]
+                    t["pnl_dollars"] = fill["pnl_dollars"]
+                    t["pnl_pct"] = fill["pnl_pct"]
+                    t["rr_achieved"] = fill["rr_achieved"]
+                    t["exit_time"] = str(current_time)
+                    t["status"] = "CLOSED"
+                    break
+
+            result.equity_curve.append({
+                "timestamp": str(current_time),
+                "balance": round(account.balance, 2),
+                "pnl": round(pnl, 2),
+                "event": fill["exit_reason"],
+            })
+
+        # Only analyze for new trades on step intervals
+        if (i - warmup_bars) % step_bars != 0:
+            continue
+
+        result.bars_processed += 1
+
+        # Get point-in-time windowed data
+        windowed = get_windowed_data(all_tf, current_time)
+
+        # Skip if insufficient data in any timeframe
+        if any(len(df) < 30 for df in windowed.values()):
+            continue
+
+        # Run ICT analysis
+        try:
+            ict_context = analyze_multi_timeframe(windowed, ticker)
+        except Exception:
+            continue
+
+        score = ict_context.get("confluence_score", 0)
+
+        # Check confluence threshold
+        if score < min_score:
+            result.low_confluence_skips += 1
+            continue
+
+        # Rule-based decision
+        decision = decide_trade(ict_context, min_score)
+
+        if decision["decision"] == "NO_TRADE":
+            result.no_trade_decisions += 1
+            continue
+
+        # Validate trade
+        valid, reason = validate_trade(decision, account, pm.get_open_count())
+        if not valid:
+            continue
+
+        # Open position
+        pos = pm.open_position(decision, account, ticker)
+        # Override entry_time with backtest timestamp
+        pos.entry_time = str(current_time)
+
+        result.trades.append({
+            "id": pos.id,
+            "ticker": ticker,
+            "direction": pos.direction,
+            "entry_price": pos.entry_price,
+            "stop_loss": pos.stop_loss,
+            "take_profit": pos.take_profit,
+            "quantity": pos.quantity,
+            "risk_amount": pos.risk_amount,
+            "entry_time": str(current_time),
+            "status": "OPEN",
+            "exit_price": None,
+            "exit_reason": None,
+            "pnl_dollars": None,
+            "pnl_pct": None,
+            "rr_achieved": None,
+            "exit_time": None,
+            "setup_type": decision.get("setup_type", ""),
+            "confluence_score": score,
+            "concepts": decision.get("ict_concepts_used", []),
+        })
+
+        # Progress reporting
+        if result.bars_processed % progress_every == 0:
+            closed = len([t for t in result.trades if t["status"] == "CLOSED"])
+            print(
+                f"  Bar {result.bars_processed}: "
+                f"Balance=${account.balance:,.2f} | "
+                f"Trades={len(result.trades)} (closed={closed}) | "
+                f"Time={str(current_time)[:10]}"
+            )
+
+    # Close any remaining open positions at last price
+    last_bar = entry_bars.iloc[-1]
+    last_price = last_bar["close"]
+    for pos in pm.get_open_positions():
+        fill = pm.close_position_manual(pos.id, last_price)
+        if fill:
+            account.update_balance(fill["pnl_dollars"])
+            for t in result.trades:
+                if t["id"] == pos.id:
+                    t["exit_price"] = fill["exit_price"]
+                    t["exit_reason"] = "BACKTEST_END"
+                    t["pnl_dollars"] = fill["pnl_dollars"]
+                    t["pnl_pct"] = fill["pnl_pct"]
+                    t["rr_achieved"] = fill["rr_achieved"]
+                    t["exit_time"] = str(last_bar["timestamp"])
+                    t["status"] = "CLOSED"
+                    break
+
+    result.equity_curve.append({
+        "timestamp": str(last_bar["timestamp"]),
+        "balance": round(account.balance, 2),
+        "event": "end",
+    })
+
+    result.start_time = str(entry_bars.iloc[warmup_bars]["timestamp"])
+    result.end_time = str(last_bar["timestamp"])
+    result.final_balance = round(account.balance, 2)
+    result.duration_seconds = round(time.time() - t0, 1)
+
+    return result

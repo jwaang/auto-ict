@@ -15,6 +15,10 @@ You analyze OHLC price data with pre-computed ICT levels and make trade decision
 8. **Risk Management** — Max 1-2% of account per trade. Minimum 2:1 reward-to-risk ratio. Stop loss placed beyond the order block.
 9. **Power of Three** — Identify the pattern: Accumulation (range) → Manipulation (liquidity sweep/fake breakout) → Distribution (true move).
 10. **No Chasing** — Only enter on pullbacks to identified levels. If price has already moved, wait for the next setup.
+11. **Previous Day/Week High/Low (PDH/PDL/PWH/PWL)** — These are primary liquidity targets where stops cluster from the previous session. Use them as take-profit targets or as manipulation levels to look for entries after a sweep. An unbroken PDH/PDL is a magnet for price.
+12. **Market Structure Shift (MSS)** — A CHoCH accompanied by a displacement candle. This is a STRONGER signal than a plain CHoCH because it shows institutional commitment. Weight MSS much higher than regular CHoCH when evaluating reversals.
+13. **Consequent Encroachment (CE)** — The 50% midpoint of any FVG. This is a key reaction level where price often reverses. If price taps the CE of an FVG and rejects, that is a high-probability entry signal. CE levels are provided for each FVG.
+14. **Silver Bullet Windows** — Narrow 1-hour execution windows (3-4am ET London, 10-11am ET NY AM, 2-3pm ET NY PM) where FVGs form with high reliability. Entries during Silver Bullet windows in alignment with bias are highest probability. The NY AM window (10-11am) is statistically the best.
 
 ## Decision Framework
 
@@ -187,7 +191,9 @@ def _append_ict_levels(sections: list[str], data: dict):
     obs = data.get("unmitigated_obs", [])
     sections.append(f"Order Blocks (unmitigated): {len(obs)}")
     for ob in obs[-5:]:
-        sections.append(f"  {ob['type']} OB: {ob['low']:.2f} - {ob['high']:.2f} (mid: {ob['midpoint']:.2f}, disp ratio: {ob['displacement_body_atr']:.1f}x)")
+        strength = f", strength: {ob['strength_pct']}%" if ob.get("strength_pct") else ""
+        disp = f", disp: {ob['displacement_body_atr']:.1f}x" if ob.get("displacement_body_atr") else ""
+        sections.append(f"  {ob['type']} OB: {ob['low']:.2f} - {ob['high']:.2f} (mid: {ob['midpoint']:.2f}{disp}{strength})")
 
     # Displacements
     disps = data.get("displacements", [])
@@ -216,3 +222,36 @@ def _append_ict_levels(sections: list[str], data: dict):
     # Kill zone
     kz = data.get("kill_zone")
     sections.append(f"Active Kill Zone: {kz or 'None (outside kill zones)'}")
+
+    # Silver Bullet window
+    sb = data.get("silver_bullet")
+    if sb:
+        sections.append(f"Silver Bullet Window: {sb}")
+
+    # Previous Day/Week High/Low
+    pdhl = data.get("previous_high_low", {})
+    if pdhl:
+        parts = []
+        if pdhl.get("pdh") is not None:
+            parts.append(f"PDH=${pdhl['pdh']:.2f}{'[BROKEN]' if pdhl.get('pdh_broken') else ''}")
+        if pdhl.get("pdl") is not None:
+            parts.append(f"PDL=${pdhl['pdl']:.2f}{'[BROKEN]' if pdhl.get('pdl_broken') else ''}")
+        if pdhl.get("pwh") is not None:
+            parts.append(f"PWH=${pdhl['pwh']:.2f}{'[BROKEN]' if pdhl.get('pwh_broken') else ''}")
+        if pdhl.get("pwl") is not None:
+            parts.append(f"PWL=${pdhl['pwl']:.2f}{'[BROKEN]' if pdhl.get('pwl_broken') else ''}")
+        if parts:
+            sections.append(f"Previous High/Low: {', '.join(parts)}")
+
+    # Retracement
+    ret = data.get("retracement", {})
+    if ret and ret.get("direction") != "neutral":
+        ote_tag = " [IN OTE]" if ret.get("in_ote") else ""
+        sections.append(f"Retracement: {ret['direction']} {ret.get('current_retracement_pct', 0):.1f}% (deepest: {ret.get('deepest_retracement_pct', 0):.1f}%){ote_tag}")
+
+    # Market Structure Shifts
+    mss = data.get("mss_events", [])
+    if mss:
+        sections.append(f"Market Structure Shifts: {len(mss)}")
+        for m in mss[-3:]:
+            sections.append(f"  MSS {m['direction']} at {m['timestamp']} (displacement: {m['displacement_ratio']:.1f}x ATR)")

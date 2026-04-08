@@ -307,6 +307,68 @@ def _print_ict_summary(ctx: dict):
     print()
 
 
+def cmd_backtest(
+    data_path: str,
+    balance: float | None = None,
+    min_score: int | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    step: int = 4,
+    save_path: str | None = None,
+    show_trades: int = 20,
+):
+    """Run a walk-forward backtest on historical data."""
+    from backtest.engine import run_backtest
+    from backtest.report import print_report, print_trades, save_results, generate_equity_csv
+    from data.historical import load_continuous_contract
+
+    balance = balance or STARTING_BALANCE
+    min_score = min_score if min_score is not None else MIN_CONFLUENCE_SCORE
+
+    print(f"\n{'='*60}")
+    print(f"  ICT Backtesting Engine")
+    print(f"  Data: {data_path}")
+    print(f"  Balance: ${balance:,.2f}")
+    print(f"  Min Score: {min_score}")
+    print(f"{'='*60}\n")
+
+    # Load data
+    print("[1/3] Loading historical data...")
+    try:
+        df_1m = load_continuous_contract(data_path, start=start, end=end)
+        print(f"      Loaded {len(df_1m):,} bars ({df_1m['timestamp'].min()} to {df_1m['timestamp'].max()})")
+    except Exception as e:
+        print(f"  ERROR: Failed to load data: {e}")
+        return
+
+    # Run backtest
+    print("[2/3] Running backtest...")
+    result = run_backtest(
+        df_1m=df_1m,
+        starting_balance=balance,
+        min_score=min_score,
+        ticker="ES",
+        step_bars=step,
+    )
+
+    # Report
+    print("[3/3] Generating report...")
+    print_report(result)
+    if show_trades:
+        print_trades(result, limit=show_trades)
+
+    # Save results
+    if save_path:
+        save_results(result, save_path)
+        eq_path = save_path.replace(".json", "_equity.csv")
+        generate_equity_csv(result, eq_path)
+    else:
+        # Default save location
+        from config import PROJECT_ROOT
+        default_path = str(PROJECT_ROOT / "logs" / "backtest_results.json")
+        save_results(result, default_path)
+
+
 def main():
     parser = argparse.ArgumentParser(description="ICT Paper Trading Simulator")
     sub = parser.add_subparsers(dest="command")
@@ -323,6 +385,16 @@ def main():
     p_journal = sub.add_parser("journal", help="Show recent journal entries")
     p_journal.add_argument("--limit", type=int, default=10, help="Number of entries")
 
+    p_bt = sub.add_parser("backtest", help="Run backtest on historical data")
+    p_bt.add_argument("data", help="Path to OHLCV CSV file")
+    p_bt.add_argument("--balance", type=float, help="Starting balance (default: 100000)")
+    p_bt.add_argument("--min-score", type=int, help="Min confluence score (default: 60)")
+    p_bt.add_argument("--start", help="Start date (YYYY-MM-DD)")
+    p_bt.add_argument("--end", help="End date (YYYY-MM-DD)")
+    p_bt.add_argument("--step", type=int, default=4, help="Analyze every Nth entry bar (default: 4)")
+    p_bt.add_argument("--save", help="Path to save results JSON")
+    p_bt.add_argument("--trades", type=int, default=20, help="Number of recent trades to show")
+
     args = parser.parse_args()
 
     if args.command == "analyze":
@@ -333,6 +405,17 @@ def main():
         cmd_stats()
     elif args.command == "journal":
         cmd_journal(args.limit)
+    elif args.command == "backtest":
+        cmd_backtest(
+            data_path=args.data,
+            balance=args.balance,
+            min_score=args.min_score,
+            start=args.start,
+            end=args.end,
+            step=args.step,
+            save_path=args.save,
+            show_trades=args.trades,
+        )
     else:
         parser.print_help()
 

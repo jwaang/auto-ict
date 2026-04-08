@@ -29,8 +29,28 @@ MAX_DRAWDOWN_PCT = 10.0        # Circuit breaker: pause at 10% drawdown from pea
 # ICT detection parameters
 ATR_PERIOD = 14
 DISPLACEMENT_ATR_MULT = 2.0    # Candle body > 2x ATR = displacement
-SWING_LOOKBACK = 5             # Bars each side for swing detection
+SWING_LOOKBACK = 5             # Bars each side for swing detection (legacy)
 LIQUIDITY_CLUSTER_TOLERANCE = 0.002  # 0.2% price proximity = cluster
+
+# SMC library toggle — set False to use old hand-rolled detectors
+USE_SMC_LIBRARY = True
+
+# Per-timeframe swing_length for the SMC library
+# Library looks swing_length bars BEFORE and AFTER, so total window = 2 * swing_length
+SMC_SWING_LENGTH = {
+    "bias": 50,    # Daily: major structural levels (~2.5 months each side)
+    "swing": 20,   # 4H: intermediate structure (~1 week each side)
+    "setup": 10,   # 1H: half-day context each side
+    "entry": 5,    # 15M: ~75 min window, responsive
+}
+
+# Smaller swing_length for backtesting (less warmup data required)
+BACKTEST_SMC_SWING_LENGTH = {
+    "bias": 10,    # Daily: ~2 weeks each side (needs ~21 daily bars)
+    "swing": 10,   # 4H: responsive
+    "setup": 5,    # 1H: responsive
+    "entry": 5,    # 15M: same as live
+}
 
 # Fibonacci / OTE
 OTE_FIB_LOW = 0.618
@@ -40,21 +60,35 @@ OTE_FIB_SWEET_SPOT = 0.705
 # Kill Zone times (Eastern Time, 24h format)
 KILL_ZONES_ET = {
     "london": (2, 5),      # 2:00 - 5:00 AM ET
-    "new_york": (7, 10),   # 7:00 - 10:00 AM ET
+    "new_york": (7, 11),   # 7:00 - 11:00 AM ET (includes highest-probability Silver Bullet hour)
     "asian": (19, 22),     # 7:00 - 10:00 PM ET
 }
 
+# Silver Bullet windows (ET hours) — narrow 1-hour execution windows
+SILVER_BULLET_WINDOWS = {
+    "sb_london": (3, 4),      # 3:00 - 4:00 AM ET
+    "sb_ny_am": (10, 11),     # 10:00 - 11:00 AM ET (highest probability)
+    "sb_ny_pm": (14, 15),     # 2:00 - 3:00 PM ET
+}
+
+# London Close Kill Zone (retracement window)
+LONDON_CLOSE_KZ = (10, 12)  # 10:00 AM - 12:00 PM ET
+
 # Confluence scoring weights
 CONFLUENCE_WEIGHTS = {
-    "htf_bias_aligned": 20,
-    "fvg_present": 15,
-    "ob_present": 15,
-    "fvg_ob_overlap": 15,
+    "htf_bias_aligned": 15,
+    "fvg_present": 10,
+    "ob_present": 10,
+    "fvg_ob_overlap": 12,
     "in_ote_zone": 10,
-    "displacement_present": 10,
+    "displacement_present": 8,
     "liquidity_sweep": 10,
     "in_kill_zone": 5,
     "premium_discount_aligned": 5,
+    "pdh_pdl_target": 8,        # PDH/PDL/PWH/PWL proximity
+    "silver_bullet_window": 5,   # In a Silver Bullet window
+    "mss_present": 7,            # Market Structure Shift (CHoCH + displacement)
+    "ce_at_ob": 5,               # Consequent Encroachment at OB midpoint
 }
 MIN_CONFLUENCE_SCORE = 60  # Minimum score to call Claude API
 
