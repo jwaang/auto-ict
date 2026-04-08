@@ -9,7 +9,7 @@ Handles:
 
 import pandas as pd
 import numpy as np
-from smartmoneyconcepts import smc
+from ict.smc_patched import smc
 
 from config import SMC_SWING_LENGTH
 

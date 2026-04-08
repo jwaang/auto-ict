@@ -164,7 +164,10 @@ def resample_ohlcv(df: pd.DataFrame, target: str) -> pd.DataFrame:
     return resampled
 
 
-def build_multi_timeframe(df_1m: pd.DataFrame) -> dict[str, pd.DataFrame]:
+def build_multi_timeframe(
+    df_1m: pd.DataFrame,
+    entry_tf: str = "15min",
+) -> dict[str, pd.DataFrame]:
     """Build all timeframes from 1-minute data.
 
     Returns the same {label: DataFrame} dict that yahoo.fetch_multi_timeframe() returns,
@@ -172,10 +175,11 @@ def build_multi_timeframe(df_1m: pd.DataFrame) -> dict[str, pd.DataFrame]:
         bias  = daily
         swing = 4h
         setup = 1h
-        entry = 15m
+        entry = configurable (default 15m)
 
     Args:
         df_1m: 1-minute OHLCV DataFrame
+        entry_tf: Entry timeframe string (e.g. "1min", "5min", "15min")
 
     Returns:
         Dict of {label: DataFrame}
@@ -184,7 +188,7 @@ def build_multi_timeframe(df_1m: pd.DataFrame) -> dict[str, pd.DataFrame]:
         "bias": resample_ohlcv(df_1m, "1D"),
         "swing": resample_ohlcv(df_1m, "4h"),
         "setup": resample_ohlcv(df_1m, "1h"),
-        "entry": resample_ohlcv(df_1m, "15min"),
+        "entry": resample_ohlcv(df_1m, entry_tf),
     }
 
 
@@ -208,11 +212,22 @@ def get_windowed_data(
         Windowed {label: DataFrame} — same format, but truncated to current_time
     """
     if lookback is None:
+        # Estimate entry lookback from bar count if possible
+        entry_df = all_timeframes.get("entry")
+        entry_count = len(entry_df) if entry_df is not None else 0
+        # Heuristic: if entry has many bars (1m/5m data), use larger lookback
+        if entry_count > 10000:
+            entry_lookback = 1000  # ~1 day of 1m bars
+        elif entry_count > 5000:
+            entry_lookback = 500   # ~1.7 days of 5m bars
+        else:
+            entry_lookback = 200   # ~3 days of 15m bars
+
         lookback = {
             "bias": 130,    # ~6 months of daily bars
             "swing": 160,   # ~1 month of 4h bars (6 per day * 26 days)
             "setup": 500,   # ~1 month of 1h bars
-            "entry": 200,   # ~3 days of 15m bars
+            "entry": entry_lookback,
         }
 
     windowed = {}

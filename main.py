@@ -12,7 +12,7 @@ import argparse
 import json
 import sys
 
-from config import MIN_CONFLUENCE_SCORE, STARTING_BALANCE
+from config import MIN_CONFLUENCE_SCORE, STARTING_BALANCE, USE_AI_ANALYSIS
 from data.yahoo import fetch_multi_timeframe
 from ict.confluence import analyze_multi_timeframe
 from journal.logger import get_open_trade_count
@@ -67,7 +67,28 @@ def cmd_analyze(ticker: str, balance: float | None = None):
     score = ict_context.get("confluence_score", 0)
     print(f"\n      Confluence Score: {score}/100 (minimum: {MIN_CONFLUENCE_SCORE})")
 
-    # Step 3: Check confluence threshold
+    # Step 3: Pre-flight checks (same rules as backtest engine)
+    from ict.killzones import is_in_dead_zone, is_in_killzone, is_crypto
+    from datetime import datetime as dt
+    entry_data = ict_context.get("analyses", {}).get("entry", {})
+    current_ts_str = entry_data.get("current_timestamp")
+
+    if not is_crypto(ticker) and current_ts_str:
+        import pandas as pd
+        ts = pd.Timestamp(current_ts_str)
+
+        if is_in_dead_zone(ts):
+            print(f"\n[3/5] In dead zone (NY lunch) — no trades during this window.")
+            from journal.logger import log_low_confluence
+            log_low_confluence(ticker, score, ict_context)
+            return
+
+        if not is_in_killzone(ts):
+            print(f"\n[3/5] Outside kill zone — low probability window, AI not consulted.")
+            from journal.logger import log_low_confluence
+            log_low_confluence(ticker, score, ict_context)
+            return
+
     if score < MIN_CONFLUENCE_SCORE:
         print(f"\n[3/5] Score below threshold — AI not consulted.")
         print(f"      Logging as low-confluence no-trade decision.")
@@ -76,16 +97,21 @@ def cmd_analyze(ticker: str, balance: float | None = None):
         _print_ict_summary(ict_context)
         return
 
-    # Step 4: AI Analysis
-    print(f"[3/5] Sending to Claude API for ICT analysis...")
-    try:
-        from ai.analyst import analyze
-        account_state = account.snapshot()
-        account_state["open_position_count"] = get_open_trade_count()
-        decision = analyze(ict_context, account_state)
-    except Exception as e:
-        print(f"  ERROR: AI analysis failed: {e}")
-        return
+    # Step 4: Trade Decision
+    if USE_AI_ANALYSIS:
+        print(f"[3/5] Sending to Claude API for ICT analysis...")
+        try:
+            from ai.analyst import analyze
+            account_state = account.snapshot()
+            account_state["open_position_count"] = get_open_trade_count()
+            decision = analyze(ict_context, account_state)
+        except Exception as e:
+            print(f"  ERROR: AI analysis failed: {e}")
+            return
+    else:
+        print(f"[3/5] Running rule-based trade decision (AI disabled)...")
+        from backtest.rules import decide_trade
+        decision = decide_trade(ict_context)
 
     print(f"\n      Decision: {decision.get('decision', 'UNKNOWN')}")
     print(f"      Confidence: {decision.get('confidence', '?')}/10")
@@ -153,7 +179,7 @@ def cmd_analyze(ticker: str, balance: float | None = None):
         print(f"      Monitor will watch for price to enter zones and confirm LTF signal.")
 
     else:
-        print(f"\n[4/5] AI decided NO_TRADE — logging decision")
+        print(f"\n[4/5] NO_TRADE — {decision.get('reasoning', 'N/A')}")
         logger.log_no_trade(ticker, decision, ict_context, score)
 
     print(f"\n[5/5] Done.")
@@ -309,11 +335,13 @@ def _print_ict_summary(ctx: dict):
 
 def cmd_backtest(
     data_path: str,
+    ticker: str = "ES",
     balance: float | None = None,
     min_score: int | None = None,
     start: str | None = None,
     end: str | None = None,
-    step: int = 4,
+    entry_tf: str = "15min",
+    step: int | None = None,
     save_path: str | None = None,
     show_trades: int = 20,
 ):
@@ -328,6 +356,8 @@ def cmd_backtest(
     print(f"\n{'='*60}")
     print(f"  ICT Backtesting Engine")
     print(f"  Data: {data_path}")
+    print(f"  Ticker: {ticker}")
+    print(f"  Entry TF: {entry_tf}")
     print(f"  Balance: ${balance:,.2f}")
     print(f"  Min Score: {min_score}")
     print(f"{'='*60}\n")
@@ -347,7 +377,8 @@ def cmd_backtest(
         df_1m=df_1m,
         starting_balance=balance,
         min_score=min_score,
-        ticker="ES",
+        ticker=ticker,
+        entry_tf=entry_tf,
         step_bars=step,
     )
 
@@ -387,11 +418,13 @@ def main():
 
     p_bt = sub.add_parser("backtest", help="Run backtest on historical data")
     p_bt.add_argument("data", help="Path to OHLCV CSV file")
+    p_bt.add_argument("--ticker", default="ES", help="Ticker symbol (default: ES). Use BTC-USD for crypto.")
     p_bt.add_argument("--balance", type=float, help="Starting balance (default: 100000)")
     p_bt.add_argument("--min-score", type=int, help="Min confluence score (default: 60)")
     p_bt.add_argument("--start", help="Start date (YYYY-MM-DD)")
     p_bt.add_argument("--end", help="End date (YYYY-MM-DD)")
-    p_bt.add_argument("--step", type=int, default=4, help="Analyze every Nth entry bar (default: 4)")
+    p_bt.add_argument("--entry-tf", default="15min", help="Entry timeframe: 1min, 5min, 15min (default: 15min)")
+    p_bt.add_argument("--step", type=int, default=None, help="Analyze every Nth entry bar (auto-calculated if omitted)")
     p_bt.add_argument("--save", help="Path to save results JSON")
     p_bt.add_argument("--trades", type=int, default=20, help="Number of recent trades to show")
 
@@ -408,10 +441,12 @@ def main():
     elif args.command == "backtest":
         cmd_backtest(
             data_path=args.data,
+            ticker=args.ticker,
             balance=args.balance,
             min_score=args.min_score,
             start=args.start,
             end=args.end,
+            entry_tf=args.entry_tf,
             step=args.step,
             save_path=args.save,
             show_trades=args.trades,

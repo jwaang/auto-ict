@@ -11,13 +11,21 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from zoneinfo import ZoneInfo
+
 from backtest.rules import decide_trade
 from config import BACKTEST_SMC_SWING_LENGTH, MIN_CONFLUENCE_SCORE, STARTING_BALANCE
 from data.historical import build_multi_timeframe, get_windowed_data
 from ict.confluence import analyze_multi_timeframe
+from ict.killzones import is_crypto
 from ict.smc_adapter import set_swing_length_override
 from trading.account import Account
 from trading.positions import Position, PositionManager
+
+_ET = ZoneInfo("America/New_York")
+
+# Session end hours (ET) — force close all non-crypto positions
+_SESSION_END_HOUR = 16  # 4:00 PM ET (ES RTH close)
 from trading.risk import validate_trade
 
 
@@ -37,13 +45,24 @@ class BacktestResult:
     parameters: dict = field(default_factory=dict)
 
 
+# Default warmup and step values per entry timeframe
+_ENTRY_TF_DEFAULTS = {
+    "1min":  {"warmup": 1000, "step": 15},   # analyze every 15 min
+    "5min":  {"warmup": 500,  "step": 3},    # analyze every 15 min
+    "15min": {"warmup": 200,  "step": 4},    # analyze every hour
+    "30min": {"warmup": 100,  "step": 2},    # analyze every hour
+    "1h":    {"warmup": 50,   "step": 1},    # analyze every hour
+}
+
+
 def run_backtest(
     df_1m: pd.DataFrame,
     starting_balance: float = STARTING_BALANCE,
     min_score: int = MIN_CONFLUENCE_SCORE,
     ticker: str = "ES",
-    step_bars: int = 4,
-    warmup_bars: int = 200,
+    entry_tf: str = "15min",
+    step_bars: int | None = None,
+    warmup_bars: int | None = None,
     progress_every: int = 500,
 ) -> BacktestResult:
     """Run a walk-forward backtest on historical 1-minute data.
@@ -53,13 +72,21 @@ def run_backtest(
         starting_balance: Initial account balance
         min_score: Minimum confluence score to take trades
         ticker: Ticker symbol for display/logging
-        step_bars: Process every Nth entry bar (default 4 = every hour on 15m bars)
-        warmup_bars: Minimum entry bars before starting to trade
+        entry_tf: Entry timeframe ("1min", "5min", "15min", etc.)
+        step_bars: Process every Nth entry bar (auto-calculated if None)
+        warmup_bars: Minimum entry bars before starting (auto-calculated if None)
         progress_every: Print progress every N bars
 
     Returns:
         BacktestResult with all trades, equity curve, and stats
     """
+    # Auto-calculate defaults from entry timeframe
+    defaults = _ENTRY_TF_DEFAULTS.get(entry_tf, {"warmup": 200, "step": 4})
+    if warmup_bars is None:
+        warmup_bars = defaults["warmup"]
+    if step_bars is None:
+        step_bars = defaults["step"]
+
     t0 = time.time()
 
     # Use smaller swing_length for backtesting (less warmup needed).
@@ -68,7 +95,7 @@ def run_backtest(
     try:
         return _run_backtest_inner(
             df_1m, starting_balance, min_score, ticker,
-            step_bars, warmup_bars, progress_every, t0,
+            entry_tf, step_bars, warmup_bars, progress_every, t0,
         )
     finally:
         set_swing_length_override(None)
@@ -76,12 +103,12 @@ def run_backtest(
 
 def _run_backtest_inner(
     df_1m, starting_balance, min_score, ticker,
-    step_bars, warmup_bars, progress_every, t0,
+    entry_tf, step_bars, warmup_bars, progress_every, t0,
 ) -> BacktestResult:
     """Inner backtest loop, separated so run_backtest can wrap in try/finally."""
     # Build all timeframes from 1m data
-    print(f"  Resampling 1m data to all timeframes...")
-    all_tf = build_multi_timeframe(df_1m)
+    print(f"  Resampling 1m data to all timeframes (entry={entry_tf})...")
+    all_tf = build_multi_timeframe(df_1m, entry_tf=entry_tf)
     entry_bars = all_tf["entry"]
 
     print(f"  Entry bars: {len(entry_bars)}, Warmup: {warmup_bars}, Step: {step_bars}")
@@ -113,7 +140,8 @@ def _run_backtest_inner(
         current_time = bar["timestamp"]
         candle = {"high": bar["high"], "low": bar["low"], "close": bar["close"]}
 
-        # Check open positions for SL/TP fills on EVERY bar
+        # Check open positions for SL/TP fills on EVERY bar (before session-end,
+        # so a bar that hits SL/TP records the real fill, not a synthetic close)
         fills = pm.check_fills(candle)
         for fill in fills:
             pnl = fill["pnl_dollars"]
@@ -138,6 +166,32 @@ def _run_backtest_inner(
                 "event": fill["exit_reason"],
             })
 
+        # Force-close remaining non-crypto positions at session end (day trade only).
+        # Runs AFTER SL/TP check so real fills take priority over synthetic close.
+        if not is_crypto(ticker) and pm.get_open_count() > 0:
+            et_time = current_time.astimezone(_ET)
+            if et_time.hour >= _SESSION_END_HOUR:
+                for pos in pm.get_open_positions():
+                    fill = pm.close_position_manual(pos.id, bar["close"])
+                    if fill:
+                        account.update_balance(fill["pnl_dollars"])
+                        for t in result.trades:
+                            if t["id"] == pos.id:
+                                t["exit_price"] = fill["exit_price"]
+                                t["exit_reason"] = "SESSION_END"
+                                t["pnl_dollars"] = fill["pnl_dollars"]
+                                t["pnl_pct"] = fill["pnl_pct"]
+                                t["rr_achieved"] = fill["rr_achieved"]
+                                t["exit_time"] = str(current_time)
+                                t["status"] = "CLOSED"
+                                break
+                        result.equity_curve.append({
+                            "timestamp": str(current_time),
+                            "balance": round(account.balance, 2),
+                            "pnl": round(fill["pnl_dollars"], 2),
+                            "event": "SESSION_END",
+                        })
+
         # Only analyze for new trades on step intervals
         if (i - warmup_bars) % step_bars != 0:
             continue
@@ -147,8 +201,9 @@ def _run_backtest_inner(
         # Get point-in-time windowed data
         windowed = get_windowed_data(all_tf, current_time)
 
-        # Skip if insufficient data in any timeframe
-        if any(len(df) < 30 for df in windowed.values()):
+        # Skip if insufficient data — entry/setup need more bars than bias/swing
+        min_bars = {"bias": 5, "swing": 10, "setup": 20, "entry": 30}
+        if any(len(windowed[k]) < min_bars.get(k, 10) for k in windowed):
             continue
 
         # Run ICT analysis

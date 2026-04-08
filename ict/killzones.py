@@ -16,7 +16,7 @@ London Close: 10:00 AM - 12:00 PM ET (retracement window)
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from config import KILL_ZONES_ET, SILVER_BULLET_WINDOWS, LONDON_CLOSE_KZ
+from config import DEAD_ZONES_ET, KILL_ZONES_ET, SILVER_BULLET_WINDOWS, LONDON_CLOSE_KZ
 
 ET = ZoneInfo("America/New_York")
 
@@ -65,6 +65,18 @@ def is_london_close(ts: datetime) -> bool:
         return False
     et_time = ts.astimezone(ET)
     return LONDON_CLOSE_KZ[0] <= et_time.hour < LONDON_CLOSE_KZ[1]
+
+
+def is_in_dead_zone(ts: datetime) -> bool:
+    """Check if timestamp falls within a dead zone (avoid new entries)."""
+    if ts is None:
+        return False
+    et_time = ts.astimezone(ET)
+    hour = et_time.hour
+    for start, end in DEAD_ZONES_ET.values():
+        if start <= hour < end:
+            return True
+    return False
 
 
 def is_crypto(ticker: str) -> bool:

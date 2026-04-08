@@ -74,6 +74,12 @@ SILVER_BULLET_WINDOWS = {
 # London Close Kill Zone (retracement window)
 LONDON_CLOSE_KZ = (10, 12)  # 10:00 AM - 12:00 PM ET
 
+# Dead zones — avoid new entries during these windows (ET hours)
+# NY lunch dead zone produces reversal traps and false signals
+DEAD_ZONES_ET = {
+    "ny_lunch": (11, 13),  # 11:00 AM - 1:00 PM ET (11:30-1:00 per ICT, using full hours)
+}
+
 # Confluence scoring weights
 CONFLUENCE_WEIGHTS = {
     "htf_bias_aligned": 15,
@@ -93,6 +99,7 @@ CONFLUENCE_WEIGHTS = {
 MIN_CONFLUENCE_SCORE = 60  # Minimum score to call Claude API
 
 # Claude API
+USE_AI_ANALYSIS = False  # Set True to use Claude for trade decisions, False for rule-based only
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 CLAUDE_TEMPERATURE = 0.3
 CLAUDE_MAX_TOKENS = 2000

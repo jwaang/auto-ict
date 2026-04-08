@@ -6,6 +6,7 @@ that the AI system prompt enforces.
 """
 
 from config import MIN_CONFLUENCE_SCORE, MIN_RR_RATIO
+from ict.killzones import is_in_dead_zone, is_in_killzone, is_crypto
 
 
 def decide_trade(ict_context: dict, min_score: int = MIN_CONFLUENCE_SCORE) -> dict:
@@ -49,12 +50,30 @@ def decide_trade(ict_context: dict, min_score: int = MIN_CONFLUENCE_SCORE) -> di
         no_trade["reasoning"] = "No HTF directional bias"
         return no_trade
 
-    # Rule 2: Confluence threshold
+    # Rule 2: Kill zone gate (non-crypto only)
+    # ICT methodology: only trade during kill zones, never during dead zones
+    ticker = ict_context.get("ticker", "")
+    if not is_crypto(ticker):
+        current_ts = entry_data.get("current_timestamp")
+        if current_ts:
+            from datetime import datetime
+            import pandas as pd
+            ts = pd.Timestamp(current_ts)
+
+            if is_in_dead_zone(ts):
+                no_trade["reasoning"] = "In dead zone (NY lunch) — reversal traps likely"
+                return no_trade
+
+            if not is_in_killzone(ts):
+                no_trade["reasoning"] = "Outside kill zone — low probability window"
+                return no_trade
+
+    # Rule 3: Confluence threshold
     if score < min_score:
         no_trade["reasoning"] = f"Confluence {score} < {min_score}"
         return no_trade
 
-    # Rule 3: Must have actionable levels on entry TF
+    # Rule 4: Must have actionable levels on entry TF
     current_price = entry_data.get("current_price", 0)
     if current_price == 0:
         no_trade["reasoning"] = "No current price available"

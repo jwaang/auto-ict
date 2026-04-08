@@ -19,12 +19,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from zoneinfo import ZoneInfo
+
 from config import (
     MONITOR_CHECK_INTERVAL,
     TRADE_LOG_PATH,
     ticker_to_alpaca,
     alpaca_to_ticker,
 )
+
+_ET = ZoneInfo("America/New_York")
+_SESSION_END_HOUR = 16  # 4:00 PM ET
 
 logging.basicConfig(
     level=logging.INFO,
@@ -157,7 +162,8 @@ class PositionMonitor:
         if len(self.bar_buffer[symbol]) > self.BAR_BUFFER_SIZE:
             self.bar_buffer[symbol] = self.bar_buffer[symbol][-self.BAR_BUFFER_SIZE:]
 
-        # 1. Check open positions for SL/TP fills
+        # 1. Check open positions for SL/TP fills FIRST (real fills take priority)
+        from ict.killzones import is_crypto
         trades = self.open_trades.get(symbol, [])
         for trade in trades[:]:
             fill = check_fill(trade, bar)
@@ -190,7 +196,33 @@ class PositionMonitor:
                     f"| current=${current:.2f} | unrealized=${unrealized:.2f}"
                 )
 
-        # 2. Check conditional entries — is price in any entry zone?
+        # 2. Session-end close: force-close remaining non-crypto positions at 4 PM ET
+        #    Runs AFTER SL/TP so real fills take priority over synthetic close.
+        trades = self.open_trades.get(symbol, [])
+        if trades:
+            now_et = datetime.now(timezone.utc).astimezone(_ET)
+            ticker_sample = trades[0].get("ticker", "")
+            if not is_crypto(ticker_sample) and now_et.hour >= _SESSION_END_HOUR:
+                for trade in trades[:]:
+                    exit_price = bar["close"]
+                    direction = trade["direction"]
+                    entry = trade["entry_price"]
+                    qty = trade.get("quantity", 0)
+                    if direction == "LONG":
+                        pnl = (exit_price - entry) * qty
+                    else:
+                        pnl = (entry - exit_price) * qty
+                    log.info(
+                        f"SESSION END: {trade['ticker']} {direction} "
+                        f"entry=${entry:.2f} exit=${exit_price:.2f} "
+                        f"P&L=${pnl:.2f} (forced close at 4 PM ET)"
+                    )
+                    close_trade_in_journal(trade["id"], exit_price, "SESSION_END", pnl)
+                    trades.remove(trade)
+                if not trades and symbol in self.open_trades:
+                    del self.open_trades[symbol]
+
+        # 3. Check conditional entries — is price in any entry zone?
         conditionals = self.conditionals.get(symbol, [])
         for cond in conditionals[:]:
             self._check_conditional(symbol, cond, bar)

@@ -4,159 +4,177 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-ICT Paper Trading Simulator — applies Inner Circle Trader (ICT) methodology to paper trade any ticker. Fetches OHLC data, algorithmically detects ICT concepts (FVGs, OBs, market structure, etc.), sends context to Claude for trade decisions, simulates positions with full P&L tracking, and logs everything for re-analysis.
+ICT Paper Trading Simulator — applies Inner Circle Trader (ICT) methodology to paper trade any ticker. Fetches OHLC data, algorithmically detects ICT concepts (FVGs, OBs, market structure, etc.), sends context to Claude for trade decisions, simulates positions with full P&L tracking, and logs everything for re-analysis. Includes a walk-forward backtesting engine with no look-ahead bias.
 
 **No real trades are executed. This is a strategy testing tool.**
 
 ## Commands
 
 ```bash
-# Run ICT analysis on a ticker (fetches data → detects levels → AI decision → paper trade)
+# Run ICT analysis on a ticker (fetches data -> detects levels -> AI decision -> paper trade)
 py main.py analyze BTC-USD
 py main.py analyze AAPL --balance 50000
+
+# Backtest on historical 1-minute OHLCV data
+py main.py backtest path/to/ohlcv-1m.csv
+py main.py backtest data.csv --ticker ES --start 2025-04-07 --end 2025-07-01
+py main.py backtest data.csv --ticker BTC-USD --entry-tf 15min  # crypto: no kill zone/session-end rules
+py main.py backtest data.csv --entry-tf 5min                    # default: 15min
+py main.py backtest data.csv --min-score 50 --balance 50000
+py main.py backtest data.csv --step 8 --save logs/results.json
 
 # Check open positions for SL/TP fills
 py main.py check-positions
 
-# Show trading statistics
+# Show trading statistics / journal
 py main.py stats
-
-# Show recent journal entries
 py main.py journal --limit 20
 
-# Backtest on historical 1-minute OHLCV data
-py main.py backtest path/to/ohlcv-1m.csv
-py main.py backtest data.csv --start 2025-04-07 --end 2025-07-01
-py main.py backtest data.csv --min-score 50 --balance 50000
-py main.py backtest data.csv --step 8 --save logs/my_backtest.json
+# Run tests
+py -m pytest tests/ -v              # all 55 tests
+py -m pytest tests/test_no_lookahead.py -v   # causality tests only
+py -m pytest tests/test_trading.py -v        # trading module tests only
+py -m pytest tests/ -k "test_fvg"            # run tests matching pattern
 
 # Start real-time WebSocket position monitor (runs continuously)
 py monitor.py
 
 # Launch Streamlit dashboard
 streamlit run ui/app.py
-
-# Automated run (called by Task Scheduler every 30 min)
-py run.py
 ```
 
 ## Architecture
 
-### Two-Layer Execution Model
+### Two Execution Paths
 
-1. **Scheduled Analysis (every 30 min)** — `run.py` via Windows Task Scheduler. Fetches multi-timeframe OHLC from Yahoo Finance, runs ICT detection, calls Claude Code CLI for trade decisions, opens paper positions.
+1. **Live Analysis** — `main.py analyze TICKER` fetches OHLC from Yahoo Finance, runs ICT detection, calls Claude CLI for trade decisions, opens paper positions. Scheduled via Windows Task Scheduler every 30 min.
 
-2. **Continuous Monitor** — `monitor.py` runs as a persistent background process. Connects to Alpaca WebSocket, streams real-time minute bars for all open positions, closes positions instantly when SL/TP is hit.
+2. **Backtesting** — `main.py backtest CSV` loads historical 1m data, resamples to all timeframes, walks forward through entry bars running the full ICT detection pipeline with point-in-time windowed data, uses deterministic rule-based decisions (no AI calls), simulates trades with position/risk management.
 
 ### Data Flow
 
 ```
-Yahoo Finance (daily/4h/1h/15m OHLC)
-  → ict/confluence.py (runs all 8 ICT detectors across 4 timeframes)
-  → ai/prompt.py (builds Claude prompt with all ICT levels)
-  → ai/analyst.py (calls Claude Code CLI via subprocess)
-  → Claude returns: LONG/SHORT, CONDITIONAL_LONG/SHORT, or NO_TRADE
-  → If immediate: trading/risk.py validates → positions.py opens trade
-  → If conditional: journal logs entry zones → monitor.py watches for price to enter zones
-  → monitor.py: Alpaca WebSocket streams minute bars → checks SL/TP + conditional zone entry
-  → On zone entry: ict/confirmation.py checks LTF confirmation (CHoCH, displacement, etc.)
-  → If confirmed: auto-opens paper trade with risk validation
+Data Source (Yahoo Finance live OR historical CSV)
+  -> ict/confluence.py (runs all ICT detectors across 4 timeframes)
+  -> ai/analyst.py (live) OR backtest/rules.py (backtest)
+  -> trading/risk.py validates -> positions.py opens trade
+  -> SL/TP monitoring (monitor.py live, bar-by-bar in backtest)
+  -> journal/logger.py logs everything
 ```
 
 ### Module Responsibilities
 
 | Module | Key File | Does |
 |--------|----------|------|
-| `data/` | `yahoo.py`, `alpaca.py`, `historical.py` | OHLC fetching (Yahoo REST + Alpaca REST/WebSocket) + historical CSV loader |
-| `ict/` | `confluence.py` | Orchestrates all 8 ICT detectors, scores setups 0-100 |
-| `ai/` | `analyst.py` | Calls Claude Code CLI (`claude -p`), parses JSON response |
+| `data/` | `yahoo.py`, `historical.py` | OHLC fetching (Yahoo REST) + historical CSV loader with contract stitching and resampling |
+| `ict/` | `confluence.py`, `smc_patched.py`, `smc_adapter.py` | ICT detection engine — vendored SMC library (bias-free) + adapter + confluence scoring |
+| `ai/` | `analyst.py` | Calls Claude Code CLI (`claude -p --model claude-sonnet-4-20250514`), parses JSON response |
 | `trading/` | `risk.py`, `positions.py`, `account.py` | Paper trade lifecycle, risk validation, position sizing |
-| `journal/` | `logger.py` | JSON trade log with ICT context snapshots for re-analysis |
-| `backtest/` | `engine.py`, `rules.py`, `report.py` | Walk-forward backtesting engine with rule-based decisions |
-| `ui/` | `app.py` | Streamlit dashboard (4 tabs: dashboard, analysis, history, stats) |
+| `backtest/` | `engine.py`, `rules.py`, `report.py` | Walk-forward backtesting engine with rule-based decisions and analytics |
+| `journal/` | `logger.py` | JSON trade log with ICT context snapshots |
+| `tests/` | `test_no_lookahead.py`, `test_trading.py`, `test_data_historical.py` | 55 regression tests (causality, trading, data) |
+
+### Vendored SMC Library (`ict/smc_patched.py`)
+
+The `smartmoneyconcepts` package (v0.0.27) has critical look-ahead bias in its core functions. We vendor a patched copy at `ict/smc_patched.py` with these fixes:
+- `swing_highs_lows()`: Replaced centered window with confirm-bars approach (no future data)
+- `fvg()`: Output shifted forward by 1 bar (signal after 3rd candle closes)
+- `bos_choch()`: Signals emitted at discovery time, not backdated to earlier swing
+- No boundary swing injection at first/last bars
+
+`ict/smc_adapter.py` wraps all calls to the patched library and supports runtime `swing_length` overrides for backtesting.
 
 ### ICT Detection Engine (`ict/`)
 
-Each detector is a separate module returning dicts. `confluence.py` orchestrates them all:
+`confluence.py` orchestrates all detectors. The SMC library (via `smc_adapter.py`) handles: swings, BOS/CHoCH, FVGs, order blocks, liquidity, retracements, previous high/low. Custom detectors handle: displacement (`displacement.py`), kill zones (`killzones.py`), Fibonacci/OTE (`fib.py`), ATR (`candles.py`).
 
-- `structure.py` — Swing highs/lows, BOS/CHoCH, market bias determination
-- `fvg.py` — Fair Value Gap detection (3-candle imbalance pattern)
-- `order_blocks.py` — Last opposing candle before displacement
-- `displacement.py` — Impulsive candles (body > 2x ATR)
-- `liquidity.py` — Swing clustering + sweep detection
-- `killzones.py` — London/NY/Asian session time checks
-- `fib.py` — Premium/Discount zones + OTE (61.8-79% Fibonacci)
-- `candles.py` — ATR, body size, range helpers
-- `confirmation.py` — Multi-TF entry confirmation (CHoCH, displacement, rejection wicks, FVG formation)
+The SMC adapter is lazy-imported — setting `USE_SMC_LIBRARY=False` in config falls back to hand-rolled detectors without requiring the `smartmoneyconcepts` package.
 
-### Conditional Entry System
+## Multi-Timeframe Analysis
 
-AI can output `CONDITIONAL_LONG`/`CONDITIONAL_SHORT` with prioritized entry zones instead of immediate trades. Each zone specifies price range, zone type (OB/FVG/OTE), stop loss, take profit, R:R, and what LTF confirmation is needed. The monitor watches for price to enter these zones, then runs `ict/confirmation.py` to check for entry signals on the appropriate confirmation timeframe.
+| Label | Timeframe | Purpose |
+|-------|-----------|---------|
+| `bias` | Daily | HTF market structure bias |
+| `swing` | 4H | Intermediate structure (bias fallback when daily is neutral) |
+| `setup` | 1H | Setup identification (FVGs, OBs) |
+| `entry` | Configurable (1m/5m/15m) | Entry signals and trade execution |
 
-Confirmation timeframe scales with zone origin:
-- 4H zone → requires 1H confirmation (CHoCH or displacement, score >= 3)
-- 1H zone → requires 15M confirmation (score >= 2)
-- 15M zone → requires 15M confirmation (score >= 2)
+For backtesting, all timeframes are resampled from 1m data. Bar timestamps use **bar-close labeling** (a 1H bar covering 10:00-10:59 is stamped 11:00) to prevent look-ahead bias in windowed analysis.
 
-### Confluence Scoring
+## Confluence Scoring (0-100)
 
-Setups are scored 0-100. Below `MIN_CONFLUENCE_SCORE` (60), Claude is not consulted:
-- HTF bias alignment: +20, FVG: +15, OB: +15, FVG+OB overlap: +15
-- OTE zone: +10, Displacement: +10, Liquidity sweep: +10
-- Kill zone: +5, Premium/Discount alignment: +5
+| Factor | Weight |
+|--------|--------|
+| HTF bias aligned | 15 |
+| FVG+OB overlap | 12 |
+| FVG present | 10 |
+| OB present | 10 |
+| Liquidity sweep | 10 |
+| OTE zone (61.8-79% Fib) | 10 |
+| PDH/PDL target | 8 |
+| Displacement (body > 2x ATR) | 8 |
+| MSS (CHoCH + displacement) | 7 |
+| Kill zone | 5 |
+| Silver Bullet window | 5 |
+| Premium/Discount aligned | 5 |
+| CE at OB midpoint | 5 |
 
-### AI Integration
+Minimum score to trade: 60. Weights defined in `config.CONFLUENCE_WEIGHTS`.
 
-Uses Claude Code CLI (`claude -p`), NOT the Anthropic SDK directly. This runs on the user's Claude Pro/Max subscription with no API credits needed. The system prompt contains 10 ICT rules the AI must follow. Response is parsed as JSON.
+## Backtesting Rules
+
+The backtest engine uses deterministic rules (`backtest/rules.py`). The live path (`main.py analyze`) also uses these same rules when `USE_AI_ANALYSIS = False` (current default). Set `True` in `config.py` to re-enable Claude AI decisions.
+
+1. **HTF bias required** — daily must be bullish or bearish (falls back to 4H swing bias if daily is neutral)
+2. **Kill zone gate** (non-crypto only) — entries only during London (2-5 AM ET), NY (7-11 AM ET), or Asian (7-10 PM ET)
+3. **Dead zone block** — no entries during NY lunch (11 AM - 1 PM ET)
+4. **Confluence >= 60**
+5. **Actionable ICT levels** — needs FVG+OB overlap, standalone OB, or standalone FVG aligned with bias
+6. **Minimum 2:1 R:R**
+7. **Session-end close** (non-crypto) — all positions force-closed at 4 PM ET (day trades only, no overnight holds). SL/TP fills are checked BEFORE session-end so real fills take priority over synthetic close.
+
+Crypto tickers (detected by `is_crypto()` or `--ticker BTC-USD`) bypass kill zone/dead zone/session-end rules.
+
+## Risk Management
+
+Enforced in `trading/risk.py`:
+- Max 1% account per trade, minimum 2:1 R:R
+- Max 3 concurrent positions, SL must be 0.1-5% from entry
+- 10% drawdown from peak = circuit breaker
+- Position sizing: `risk_amount / sl_distance`
+
+## Trading Rules
+
+- **Stocks and futures (ES, AAPL, etc.):** Day trades only. All positions closed by 4 PM ET. Never hold overnight.
+- **Crypto (BTC-USD, etc.):** Can hold swing trades. Positions stay open until SL/TP hit.
+
+## Key Files
+
+- `config.py` — All constants: risk %, ATR params, kill zone times, confluence weights, swing lengths
+- `ict/smc_patched.py` — Vendored + patched SMC library (no look-ahead bias)
+- `logs/trades.json` — Trade journal (append-only)
+- `BACKTESTING-FINDINGS.md` — Documented backtest results and analysis across ES and BTC
+- `ICT_Trading_Strategies_Combined_Research.md` — ICT methodology reference
 
 ## Data Sources
 
 | Source | Used For | Auth |
 |--------|----------|------|
-| Yahoo Finance | Multi-timeframe OHLC (daily, 1h→4h aggregated, 1h, 15m) | None (urllib, unauthenticated) |
-| Alpaca Markets | Real-time WebSocket minute bars for position monitoring | Free API key (`.env`) |
+| Yahoo Finance | Live multi-timeframe OHLC | None (urllib) |
+| Databento CSV | Historical backtesting (1m OHLCV) | Downloaded files |
+| Alpaca Markets | Real-time WebSocket for position monitoring | Free API key (`.env`) |
 
 ## Credentials (`.env`)
 
 ```
-ALPACA_API_KEY=...        # Free from app.alpaca.markets
-ALPACA_SECRET_KEY=...     # Free from app.alpaca.markets
+ALPACA_API_KEY=...
+ALPACA_SECRET_KEY=...
 ```
-
-Claude Code CLI authentication is handled by the user's existing login.
-
-## Key Files
-
-- `config.py` — All constants: risk %, ATR params, kill zone times, confluence weights, API keys
-- `logs/trades.json` — Trade journal (append-only, includes AI reasoning + ICT context snapshots)
-- `ICT-STRATEGY-GUIDE.md` — Comprehensive ICT methodology reference (21 sections)
 
 ## Ticker Format
 
-Yahoo Finance uses `BTC-USD`, Alpaca uses `BTC/USD`. Conversion helpers in `config.py`: `ticker_to_alpaca()` and `alpaca_to_ticker()`.
+Yahoo Finance uses `BTC-USD`, Alpaca uses `BTC/USD`. Conversion helpers in `config.py`: `ticker_to_alpaca()` and `alpaca_to_ticker()`. Crypto detection (`is_crypto()` in `killzones.py`) checks for `-USD`, `-USDT` suffixes.
 
-## Multi-Timeframe Analysis
+## Historical Data Format (Databento)
 
-| Timeframe | Label | Source | Purpose |
-|-----------|-------|--------|---------|
-| Daily | `bias` | Yahoo `1d/6mo` | HTF market structure bias |
-| 4H | `swing` | Yahoo `1h/1mo` aggregated to 4H | Swing structure, OBs, displacement legs |
-| 1H | `setup` | Yahoo `1h/1mo` | Setup identification (FVGs, OBs) |
-| 15M | `entry` | Yahoo `15m/5d` | Entry timing, OTE, kill zones |
-
-4H candles are synthesized by aggregating 1H bars (Yahoo has no native 4H interval). The `aggregate_to` key in `config.TIMEFRAMES` controls this.
-
-## Risk Management Rules
-
-Enforced in `trading/risk.py`:
-- Max 1% account per trade, minimum 2:1 R:R
-- Max 3 concurrent positions, SL must be 0.1-5% from entry
-- 10% drawdown from peak = circuit breaker (trading paused)
-- If Claude says NO_TRADE, it's respected unconditionally
-- Open position count is loaded from `journal/logger.py` (not in-memory) to survive process restarts
-- Balance is derived from the most recently *closed* trade (sorted by `timestamp_closed`)
-
-## Background Processes
-
-- **Windows Task Scheduler** "ICT Paper Trader": runs `schedule.bat` every 30 minutes
-- **Windows Startup Folder** `ICT-Price-Monitor.vbs`: launches `monitor.py` at login (persistent WebSocket monitor)
+CSV columns: `ts_event, rtype, publisher_id, instrument_id, open, high, low, close, volume, symbol`. The `data/historical.py` loader handles contract stitching (ES roll dates), spread symbol filtering, and resampling from 1m to all timeframes.
