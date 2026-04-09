@@ -1,22 +1,31 @@
 """Risk management validation for trade decisions."""
 
 from config import (
+    FUTURES_MAX_SL_DISTANCE_POINTS,
+    FUTURES_MIN_SL_DISTANCE_POINTS,
     MAX_CONCURRENT_POSITIONS,
     MAX_SL_DISTANCE_PCT,
     MIN_RR_RATIO,
     MIN_SL_DISTANCE_PCT,
     RISK_PER_TRADE_PCT,
+    is_futures,
 )
 from trading.account import Account
 
 
-def validate_trade(decision: dict, account: Account, open_position_count: int = 0) -> tuple[bool, str]:
+def validate_trade(
+    decision: dict,
+    account: Account,
+    open_position_count: int = 0,
+    ticker: str = "",
+) -> tuple[bool, str]:
     """Validate a trade decision against risk management rules.
 
     Args:
         decision: AI trade decision dict
         account: Current account
         open_position_count: Number of currently open positions
+        ticker: Ticker symbol (used for futures-specific validation)
 
     Returns:
         (is_valid, reason_if_invalid)
@@ -56,12 +65,19 @@ def validate_trade(decision: dict, account: Account, open_position_count: int = 
     if rr < MIN_RR_RATIO:
         return False, f"R:R {rr:.2f} below minimum {MIN_RR_RATIO}"
 
-    # SL distance bounds
-    sl_pct = risk / entry
-    if sl_pct < MIN_SL_DISTANCE_PCT:
-        return False, f"SL too tight: {sl_pct:.4f} < {MIN_SL_DISTANCE_PCT}"
-    if sl_pct > MAX_SL_DISTANCE_PCT:
-        return False, f"SL too wide: {sl_pct:.4f} > {MAX_SL_DISTANCE_PCT}"
+    # SL distance bounds — futures use point-based, others use percentage-based
+    if is_futures(ticker):
+        sl_points = risk  # For futures, risk is already in points
+        if sl_points < FUTURES_MIN_SL_DISTANCE_POINTS:
+            return False, f"SL too tight: {sl_points:.1f} pts < {FUTURES_MIN_SL_DISTANCE_POINTS} pts"
+        if sl_points > FUTURES_MAX_SL_DISTANCE_POINTS:
+            return False, f"SL too wide: {sl_points:.1f} pts > {FUTURES_MAX_SL_DISTANCE_POINTS} pts"
+    else:
+        sl_pct = risk / entry
+        if sl_pct < MIN_SL_DISTANCE_PCT:
+            return False, f"SL too tight: {sl_pct:.4f} < {MIN_SL_DISTANCE_PCT}"
+        if sl_pct > MAX_SL_DISTANCE_PCT:
+            return False, f"SL too wide: {sl_pct:.4f} > {MAX_SL_DISTANCE_PCT}"
 
     # Position count
     if open_position_count >= MAX_CONCURRENT_POSITIONS:

@@ -170,7 +170,7 @@ def build_multi_timeframe(
 ) -> dict[str, pd.DataFrame]:
     """Build all timeframes from 1-minute data.
 
-    Returns the same {label: DataFrame} dict that yahoo.fetch_multi_timeframe() returns,
+    Returns a {label: DataFrame} dict with the standard multi-timeframe format,
     matching the config.TIMEFRAMES structure:
         bias  = daily
         swing = 4h

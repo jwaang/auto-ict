@@ -119,28 +119,35 @@ def _load_env_var(name: str) -> str:
 
 ANTHROPIC_API_KEY = _load_env_var("ANTHROPIC_API_KEY")
 
-# Alpaca Markets (free tier — real-time crypto WebSocket + REST)
-ALPACA_API_KEY = _load_env_var("ALPACA_API_KEY")
-ALPACA_SECRET_KEY = _load_env_var("ALPACA_SECRET_KEY")
-ALPACA_WS_URL = "wss://stream.data.alpaca.markets/v1beta3/crypto/us"
-ALPACA_REST_URL = "https://data.alpaca.markets/v1beta3/crypto/us"
+# Interactive Brokers (paper trading via TWS or IB Gateway)
+IBKR_HOST = "127.0.0.1"
+IBKR_PORT = 7497           # 7497 = TWS paper, 4002 = IB Gateway paper
+IBKR_CLIENT_ID = 1
+
+# MES (Micro E-mini S&P 500) contract details
+MES_EXCHANGE = "CME"
+MES_POINT_VALUE = 5.0       # $5 per point
+MES_TICK_SIZE = 0.25         # Min tick = 0.25 points
+MES_TICK_VALUE = 1.25        # $1.25 per tick
 
 # Monitor settings
 ANALYSIS_INTERVAL_MINUTES = 30  # How often to run ICT analysis
 MONITOR_CHECK_INTERVAL = 60     # Seconds between journal re-reads when no positions
 
-# Risk validation bounds
+# Risk validation bounds (percentage-based, for stocks/crypto/backtesting)
 MIN_SL_DISTANCE_PCT = 0.001   # SL must be at least 0.1% from entry
 MAX_SL_DISTANCE_PCT = 0.05    # SL must be at most 5% from entry
 
+# Futures-specific risk bounds (point-based)
+FUTURES_MIN_SL_DISTANCE_POINTS = 2.0    # Min 2 points ($10) SL
+FUTURES_MAX_SL_DISTANCE_POINTS = 50.0   # Max 50 points ($250) SL
 
-def ticker_to_alpaca(ticker: str) -> str:
-    """Convert Yahoo-style ticker to Alpaca format. BTC-USD → BTC/USD"""
-    if "-" in ticker and ticker.endswith("USD"):
-        return ticker.replace("-", "/")
-    return ticker
+# Known futures symbols
+FUTURES_SYMBOLS = {"MES", "ES", "NQ", "MNQ", "YM", "MYM", "RTY", "M2K"}
 
 
-def alpaca_to_ticker(symbol: str) -> str:
-    """Convert Alpaca format to Yahoo-style. BTC/USD → BTC-USD"""
-    return symbol.replace("/", "-")
+def is_futures(ticker: str) -> bool:
+    """Check if ticker is a futures instrument."""
+    # Strip trailing contract month/year codes like MES1!, MESH5, etc.
+    base = ticker.upper().rstrip("!").rstrip("0123456789")
+    return base in FUTURES_SYMBOLS

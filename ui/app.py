@@ -17,8 +17,7 @@ def main():
     # Sidebar controls
     with st.sidebar:
         st.header("Controls")
-        ticker = st.text_input("Ticker Symbol", value="AAPL", help="e.g. AAPL, BTC-USD, MSFT")
-        asset_type = st.selectbox("Asset Type", ["equity", "crypto", "forex"])
+        ticker = st.text_input("Ticker Symbol", value="MES", help="MES (Micro E-mini S&P 500)", disabled=True)
         balance_override = st.number_input(
             "Starting Balance", value=100_000.0, step=1000.0, format="%.2f"
         )
@@ -118,10 +117,13 @@ def _tab_analysis(ticker: str, balance: float):
     """Analysis tab — run ICT analysis and show results."""
     st.subheader(f"ICT Analysis: {ticker}")
 
-    with st.spinner(f"Fetching OHLC data for {ticker}..."):
+    with st.spinner(f"Fetching OHLC data from IBKR for {ticker}..."):
         try:
-            from data.yahoo import fetch_multi_timeframe
-            dataframes = fetch_multi_timeframe(ticker)
+            from broker.ibkr import IBKRBroker
+            broker = IBKRBroker()
+            broker.connect()
+            dataframes = broker.fetch_multi_timeframe()
+            broker.disconnect()
         except Exception as e:
             st.error(f"Failed to fetch data: {e}")
             return
@@ -206,33 +208,60 @@ def _tab_analysis(ticker: str, balance: float):
 
     st.write(f"**Invalidation**: {decision.get('invalidation', 'N/A')}")
 
-    # Paper trade execution
+    # Paper trade execution via IBKR
     if decision_type in ("LONG", "SHORT"):
         from trading.account import Account
-        from trading.positions import PositionManager
         from trading.risk import validate_trade
         from journal import logger
 
-        account = Account(starting_balance=balance)
-        pm = PositionManager()
-        valid, reason = validate_trade(decision, account, 0)
+        if st.button(f"Execute Paper Trade ({decision_type})", type="primary"):
+            try:
+                from broker.ibkr import IBKRBroker
+                from config import MES_POINT_VALUE
+                broker = IBKRBroker()
+                broker.connect()
 
-        if valid:
-            if st.button(f"📝 Execute Paper Trade ({decision_type})", type="primary"):
-                pos = pm.open_position(decision, account, ticker)
-                logger.log_trade(
-                    ticker=ticker,
-                    position=vars(pos),
-                    ai_decision=decision,
-                    ict_context=ict_context,
-                    account_before=account.balance,
-                    account_after=account.balance,
+                # Use real IBKR account balance for sizing
+                acct = broker.get_account_summary()
+                ibkr_balance = acct.get("balance", balance)
+                account = Account(starting_balance=ibkr_balance, balance=ibkr_balance)
+                valid, reason = validate_trade(decision, account, 0, ticker=ticker)
+
+                if not valid:
+                    broker.disconnect()
+                    st.warning(f"Trade rejected by risk management: {reason}")
+                    logger.log_no_trade(ticker, decision, ict_context, score)
+                    return
+
+                entry_price = decision["entry_price"]
+                stop_loss = decision["stop_loss"]
+                take_profit = decision["take_profit"]
+                quantity = broker.calc_futures_quantity(ibkr_balance, entry_price, stop_loss)
+                order_result = broker.place_bracket_order(
+                    direction=decision_type, quantity=quantity,
+                    entry_price=entry_price, stop_loss=stop_loss, take_profit=take_profit,
                 )
-                st.success(f"Paper trade opened! Position ID: {pos.id}")
-                st.rerun()
-        else:
-            st.warning(f"Trade rejected by risk management: {reason}")
-            logger.log_no_trade(ticker, decision, ict_context, score)
+                risk = abs(entry_price - stop_loss) * MES_POINT_VALUE * quantity
+                    position_data = {
+                        "direction": decision_type, "entry_price": entry_price,
+                        "stop_loss": stop_loss, "take_profit": take_profit,
+                        "quantity": quantity, "risk_amount": risk, "status": "OPEN",
+                        "broker_type": "ibkr",
+                        "broker_order_ids": {
+                            "parent": order_result["parent_order_id"],
+                            "take_profit": order_result["tp_order_id"],
+                            "stop_loss": order_result["sl_order_id"],
+                        },
+                    }
+                    logger.log_trade(
+                        ticker=ticker, position=position_data, ai_decision=decision,
+                        ict_context=ict_context, account_before=ibkr_balance, account_after=ibkr_balance,
+                    )
+                    broker.disconnect()
+                    st.success(f"Bracket order placed on IBKR! Status: {order_result['status']}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to place order: {e}")
 
 
 def _tab_check_positions(ticker: str | None = None):
@@ -246,16 +275,18 @@ def _tab_check_positions(ticker: str | None = None):
         st.info("No open positions to check.")
         return
 
-    from data.yahoo import fetch_ohlc
-    for trade in open_trades:
-        t_ticker = trade["ticker"]
-        try:
-            df = fetch_ohlc(t_ticker, "15m", "1d")
-            latest = df.iloc[-1]
-            st.write(f"**{t_ticker}** {trade['direction']} @ ${trade['entry_price']:.2f}")
-            st.write(f"Current: ${latest['close']:.2f} | SL: ${trade['stop_loss']:.2f} | TP: ${trade['take_profit']:.2f}")
-        except Exception as e:
-            st.error(f"Error checking {t_ticker}: {e}")
+    try:
+        from broker.ibkr import IBKRBroker
+        broker = IBKRBroker()
+        broker.connect()
+        price = broker.get_current_price()
+        for trade in open_trades:
+            current = price.get("last") or price.get("mid") or 0
+            st.write(f"**{trade['ticker']}** {trade['direction']} @ ${trade['entry_price']:.2f}")
+            st.write(f"Current: ${current:.2f} | SL: ${trade['stop_loss']:.2f} | TP: ${trade['take_profit']:.2f}")
+        broker.disconnect()
+    except Exception as e:
+        st.error(f"Error connecting to IBKR: {e}")
 
 
 def _tab_trade_history():

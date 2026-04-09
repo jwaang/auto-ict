@@ -17,7 +17,7 @@ from backtest.rules import decide_trade
 from config import BACKTEST_SMC_SWING_LENGTH, MIN_CONFLUENCE_SCORE, STARTING_BALANCE
 from data.historical import build_multi_timeframe, get_windowed_data
 from ict.confluence import analyze_multi_timeframe
-from ict.killzones import is_crypto
+from ict.killzones import is_crypto as _is_crypto_fn
 from ict.smc_adapter import set_swing_length_override
 from trading.account import Account
 from trading.positions import Position, PositionManager
@@ -134,6 +134,10 @@ def _run_backtest_inner(
         "event": "start",
     })
 
+    # HTF analysis cache — passed to analyze_multi_timeframe to avoid
+    # re-analyzing bias/swing/setup every step when their latest bar hasn't changed
+    _analysis_cache = {}
+
     # Walk forward through entry bars
     for i in range(warmup_bars, len(entry_bars)):
         bar = entry_bars.iloc[i]
@@ -168,7 +172,7 @@ def _run_backtest_inner(
 
         # Force-close remaining non-crypto positions at session end (day trade only).
         # Runs AFTER SL/TP check so real fills take priority over synthetic close.
-        if not is_crypto(ticker) and pm.get_open_count() > 0:
+        if not _is_crypto_fn(ticker) and pm.get_open_count() > 0:
             et_time = current_time.astimezone(_ET)
             if et_time.hour >= _SESSION_END_HOUR:
                 for pos in pm.get_open_positions():
@@ -206,9 +210,12 @@ def _run_backtest_inner(
         if any(len(windowed[k]) < min_bars.get(k, 10) for k in windowed):
             continue
 
-        # Run ICT analysis
+        # Run ICT analysis with HTF caching — only recompute a timeframe
+        # when its latest bar changes (daily changes once/day, 4H once/4h, etc.)
         try:
-            ict_context = analyze_multi_timeframe(windowed, ticker)
+            ict_context = analyze_multi_timeframe(
+                windowed, ticker, _cache=_analysis_cache
+            )
         except Exception:
             continue
 

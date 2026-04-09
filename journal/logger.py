@@ -72,6 +72,8 @@ def log_trade(
         },
         "ict_context_snapshot": _summarize_context(ict_context),
         "status": position.get("status", "OPEN"),
+        "broker_type": position.get("broker_type", "simulated"),
+        "broker_order_ids": position.get("broker_order_ids"),
     }
 
     data["trades"].append(entry)

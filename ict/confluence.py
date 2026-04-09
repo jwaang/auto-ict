@@ -284,19 +284,41 @@ def _find_ote_from_swings(swings: list, bias: str) -> dict:
 def analyze_multi_timeframe(
     dataframes: dict,
     ticker: str = "",
+    _cache: dict | None = None,
 ) -> dict:
     """Run ICT analysis across all timeframes.
 
     Args:
-        dataframes: {label: DataFrame} from yahoo.fetch_multi_timeframe()
+        dataframes: {label: DataFrame} with timestamp, open, high, low, close, volume
         ticker: Ticker symbol for crypto detection
+        _cache: Optional dict for caching per-timeframe results across calls.
+                When provided, a timeframe is only re-analyzed if its latest
+                bar timestamp has changed. Pass the same dict across calls
+                to enable caching (used by the backtest engine for speed).
 
     Returns:
         Complete ICT context dict ready for AI prompt
     """
     analyses = {}
     for label, df in dataframes.items():
-        analyses[label] = analyze_timeframe(df, label)
+        if df.empty:
+            analyses[label] = {}
+            continue
+
+        # Cache: skip re-analysis if the latest bar hasn't changed
+        if _cache is not None:
+            latest_ts = df["timestamp"].iloc[-1] if "timestamp" in df.columns else None
+            cache_key = f"{label}_ts"
+            cache_result_key = f"{label}_result"
+            if _cache.get(cache_key) == latest_ts and cache_result_key in _cache:
+                analyses[label] = _cache[cache_result_key]
+                continue
+            # Miss — analyze and store
+            analyses[label] = analyze_timeframe(df, label)
+            _cache[cache_key] = latest_ts
+            _cache[cache_result_key] = analyses[label]
+        else:
+            analyses[label] = analyze_timeframe(df, label)
 
     # HTF bias comes from the bias timeframe (daily)
     htf_bias = analyses.get("bias", {}).get("bias", "neutral")

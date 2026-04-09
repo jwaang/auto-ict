@@ -1,9 +1,8 @@
 """ICT Paper Trading Simulator — CLI entry point.
 
 Usage:
-    python main.py analyze AAPL          # Run ICT analysis on AAPL
-    python main.py analyze BTC-USD       # Analyze Bitcoin
-    python main.py check-positions       # Check open positions for SL/TP fills
+    python main.py analyze MES           # Run ICT analysis on MES via IBKR
+    python main.py check-positions       # Check open IBKR positions
     python main.py stats                 # Show trading statistics
     python main.py journal              # Show recent journal entries
 """
@@ -12,48 +11,62 @@ import argparse
 import json
 import sys
 
-from config import MIN_CONFLUENCE_SCORE, STARTING_BALANCE, USE_AI_ANALYSIS
-from data.yahoo import fetch_multi_timeframe
+from config import (
+    MIN_CONFLUENCE_SCORE,
+    MES_POINT_VALUE,
+    STARTING_BALANCE,
+    USE_AI_ANALYSIS,
+    is_futures,
+)
 from ict.confluence import analyze_multi_timeframe
 from journal.logger import get_open_trade_count
 from trading.account import Account
-from trading.positions import PositionManager
 from trading.risk import validate_trade
 
 
 def cmd_analyze(ticker: str, balance: float | None = None):
-    """Run full ICT analysis → AI decision → paper trade."""
-    account = Account(starting_balance=balance or STARTING_BALANCE)
+    """Run full ICT analysis → trade decision → IBKR bracket order."""
+    from broker.ibkr import IBKRBroker
 
-    # Load existing state from journal if available
-    try:
-        from journal.logger import load_journal
-        journal = load_journal()
-        meta = journal.get("metadata", {})
-        if meta.get("current_balance"):
-            account.balance = meta["current_balance"]
-            account.peak_balance = max(account.balance, account.starting_balance)
-    except Exception:
-        pass
+    broker = IBKRBroker()
 
+    # Connect to IBKR
     print(f"\n{'='*60}")
-    print(f"  ICT Paper Trading Simulator")
+    print(f"  ICT Paper Trading Simulator (IBKR)")
     print(f"  Analyzing: {ticker}")
-    print(f"  Account: ${account.balance:,.2f}")
     print(f"{'='*60}\n")
 
-    # Step 1: Fetch OHLC data
-    print("[1/5] Fetching OHLC data (3 timeframes)...")
+    print("[1/5] Connecting to IBKR...")
     try:
-        dataframes = fetch_multi_timeframe(ticker)
+        broker.connect()
+    except ConnectionError as e:
+        print(f"  ERROR: {e}")
+        return
+
+    # Get account balance from IBKR
+    try:
+        acct = broker.get_account_summary()
+        ibkr_balance = acct.get("balance", balance or STARTING_BALANCE)
+    except Exception:
+        ibkr_balance = balance or STARTING_BALANCE
+
+    account = Account(starting_balance=ibkr_balance, balance=ibkr_balance)
+    print(f"  Account: ${account.balance:,.2f}")
+
+    # Step 1: Fetch OHLC data from IBKR
+    print("[2/5] Fetching OHLC data from IBKR (4 timeframes)...")
+    try:
+        contract = broker.get_mes_contract()
+        dataframes = broker.fetch_multi_timeframe(contract)
         for label, df in dataframes.items():
             print(f"      {label}: {len(df)} candles")
     except Exception as e:
         print(f"  ERROR: Failed to fetch data: {e}")
+        broker.disconnect()
         return
 
     # Step 2: Run ICT detection
-    print("[2/5] Running ICT detection engine...")
+    print("[3/5] Running ICT detection engine...")
     ict_context = analyze_multi_timeframe(dataframes, ticker)
 
     analyses = ict_context.get("analyses", {})
@@ -67,12 +80,12 @@ def cmd_analyze(ticker: str, balance: float | None = None):
     score = ict_context.get("confluence_score", 0)
     print(f"\n      Confluence Score: {score}/100 (minimum: {MIN_CONFLUENCE_SCORE})")
 
-    # Step 3: Pre-flight checks (same rules as backtest engine)
+    # Step 3: Pre-flight checks
     from ict.killzones import is_in_dead_zone, is_in_killzone, is_crypto
-    from datetime import datetime as dt
     entry_data = ict_context.get("analyses", {}).get("entry", {})
     current_ts_str = entry_data.get("current_timestamp")
 
+    # Futures use kill zone / dead zone rules (same as non-crypto)
     if not is_crypto(ticker) and current_ts_str:
         import pandas as pd
         ts = pd.Timestamp(current_ts_str)
@@ -81,25 +94,28 @@ def cmd_analyze(ticker: str, balance: float | None = None):
             print(f"\n[3/5] In dead zone (NY lunch) — no trades during this window.")
             from journal.logger import log_low_confluence
             log_low_confluence(ticker, score, ict_context)
+            broker.disconnect()
             return
 
         if not is_in_killzone(ts):
-            print(f"\n[3/5] Outside kill zone — low probability window, AI not consulted.")
+            print(f"\n[3/5] Outside kill zone — low probability window.")
             from journal.logger import log_low_confluence
             log_low_confluence(ticker, score, ict_context)
+            broker.disconnect()
             return
 
     if score < MIN_CONFLUENCE_SCORE:
-        print(f"\n[3/5] Score below threshold — AI not consulted.")
+        print(f"\n[3/5] Score below threshold.")
         print(f"      Logging as low-confluence no-trade decision.")
         from journal.logger import log_low_confluence
         log_low_confluence(ticker, score, ict_context)
         _print_ict_summary(ict_context)
+        broker.disconnect()
         return
 
     # Step 4: Trade Decision
     if USE_AI_ANALYSIS:
-        print(f"[3/5] Sending to Claude API for ICT analysis...")
+        print(f"[4/5] Sending to Claude API for ICT analysis...")
         try:
             from ai.analyst import analyze
             account_state = account.snapshot()
@@ -107,9 +123,10 @@ def cmd_analyze(ticker: str, balance: float | None = None):
             decision = analyze(ict_context, account_state)
         except Exception as e:
             print(f"  ERROR: AI analysis failed: {e}")
+            broker.disconnect()
             return
     else:
-        print(f"[3/5] Running rule-based trade decision (AI disabled)...")
+        print(f"[4/5] Running rule-based trade decision...")
         from backtest.rules import decide_trade
         decision = decide_trade(ict_context)
 
@@ -119,47 +136,89 @@ def cmd_analyze(ticker: str, balance: float | None = None):
     print(f"      HTF Bias: {decision.get('htf_bias', '?')}")
 
     if decision.get("entry_price"):
-        print(f"\n      Entry:  ${decision['entry_price']:.2f}")
-        print(f"      SL:     ${decision['stop_loss']:.2f}")
-        print(f"      TP:     ${decision['take_profit']:.2f}")
+        print(f"\n      Entry:  {decision['entry_price']:.2f}")
+        print(f"      SL:     {decision['stop_loss']:.2f}")
+        print(f"      TP:     {decision['take_profit']:.2f}")
         print(f"      R:R:    {decision.get('risk_reward_ratio', '?')}")
 
     print(f"\n      Reasoning: {decision.get('reasoning', 'N/A')}")
     print(f"      Concepts: {', '.join(decision.get('ict_concepts_used', []))}")
     print(f"      Invalidation: {decision.get('invalidation', 'N/A')}")
 
-    # Step 5: Execute paper trade
+    # Step 5: Execute via IBKR bracket order
     from journal import logger
 
     decision_type = decision.get("decision", "")
 
     if decision_type in ("LONG", "SHORT"):
-        print(f"\n[4/5] Validating risk management...")
-        valid, reason = validate_trade(decision, account, get_open_trade_count())
+        print(f"\n[5/5] Validating risk management...")
+        valid, reason = validate_trade(
+            decision, account, get_open_trade_count(), ticker=ticker
+        )
 
         if valid:
-            print(f"      VALID — Opening paper trade")
-            pm = PositionManager()
-            pos = pm.open_position(decision, account, ticker)
-            trade_id = logger.log_trade(
-                ticker=ticker,
-                position=vars(pos),
-                ai_decision=decision,
-                ict_context=ict_context,
-                account_before=account.balance,
-                account_after=account.balance,
+            entry_price = decision["entry_price"]
+            stop_loss = decision["stop_loss"]
+            take_profit = decision["take_profit"]
+
+            # Calculate futures contract quantity
+            quantity = broker.calc_futures_quantity(
+                account.balance, entry_price, stop_loss
             )
-            print(f"      Position ID: {pos.id}")
-            print(f"      Quantity: {pos.quantity}")
-            print(f"      Risk: ${pos.risk_amount:.2f}")
-            print(f"      Trade logged: {trade_id}")
+            risk_per_contract = abs(entry_price - stop_loss) * MES_POINT_VALUE
+            total_risk = risk_per_contract * quantity
+
+            print(f"      VALID — Placing IBKR bracket order")
+            print(f"      Contracts: {quantity}")
+            print(f"      Risk: ${total_risk:.2f} ({total_risk / account.balance * 100:.1f}% of account)")
+
+            try:
+                order_result = broker.place_bracket_order(
+                    direction=decision_type,
+                    quantity=quantity,
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    contract=contract,
+                )
+
+                # Log to journal with broker order IDs
+                position_data = {
+                    "direction": decision_type,
+                    "entry_price": entry_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "quantity": quantity,
+                    "risk_amount": total_risk,
+                    "status": "OPEN",
+                    "broker_type": "ibkr",
+                    "broker_order_ids": {
+                        "parent": order_result["parent_order_id"],
+                        "take_profit": order_result["tp_order_id"],
+                        "stop_loss": order_result["sl_order_id"],
+                    },
+                }
+                trade_id = logger.log_trade(
+                    ticker=ticker,
+                    position=position_data,
+                    ai_decision=decision,
+                    ict_context=ict_context,
+                    account_before=account.balance,
+                    account_after=account.balance,
+                )
+                print(f"      Order status: {order_result['status']}")
+                print(f"      Parent order ID: {order_result['parent_order_id']}")
+                print(f"      Trade logged: {trade_id}")
+            except Exception as e:
+                print(f"  ERROR: Failed to place bracket order: {e}")
+                logger.log_no_trade(ticker, decision, ict_context, score)
         else:
             print(f"      REJECTED: {reason}")
             logger.log_no_trade(ticker, decision, ict_context, score)
 
     elif decision_type in ("CONDITIONAL_LONG", "CONDITIONAL_SHORT"):
         entry_zones = decision.get("entry_zones", [])
-        print(f"\n[4/5] CONDITIONAL — {len(entry_zones)} entry zone(s) set")
+        print(f"\n[5/5] CONDITIONAL — {len(entry_zones)} entry zone(s) set")
         for i, zone in enumerate(entry_zones):
             priority = zone.get("priority", "?")
             z_type = zone.get("zone_type", "?")
@@ -169,94 +228,66 @@ def cmd_analyze(ticker: str, balance: float | None = None):
             tp1 = zone.get("take_profit_1", 0)
             rr = zone.get("risk_reward", "?")
             confirm = zone.get("confirmation_needed", "?")
-            print(f"      Zone {i+1} (P{priority}): {z_type} ${z_low:,.2f}-${z_high:,.2f}")
-            print(f"        SL=${sl:,.2f} TP=${tp1:,.2f} R:R={rr}")
+            print(f"      Zone {i+1} (P{priority}): {z_type} {z_low:,.2f}-{z_high:,.2f}")
+            print(f"        SL={sl:,.2f} TP={tp1:,.2f} R:R={rr}")
             print(f"        Confirmation: {confirm}")
             print(f"        Reason: {zone.get('reasoning', 'N/A')}")
 
         cond_id = logger.log_conditional_entry(ticker, decision, ict_context, score)
         print(f"\n      Conditional entry logged: {cond_id}")
-        print(f"      Monitor will watch for price to enter zones and confirm LTF signal.")
+        print(f"      Monitor will watch for price to enter zones.")
 
     else:
-        print(f"\n[4/5] NO_TRADE — {decision.get('reasoning', 'N/A')}")
+        print(f"\n[5/5] NO_TRADE — {decision.get('reasoning', 'N/A')}")
         logger.log_no_trade(ticker, decision, ict_context, score)
 
-    print(f"\n[5/5] Done.")
+    broker.disconnect()
+    print("\nDone.")
 
 
-def cmd_check_positions(ticker: str | None = None):
-    """Check open positions against latest price data for SL/TP fills."""
-    from data.yahoo import fetch_ohlc
-    from journal.logger import load_journal
+def cmd_check_positions():
+    """Check open IBKR positions and orders."""
+    from broker.ibkr import IBKRBroker
 
-    journal = load_journal()
-    open_trades = [t for t in journal.get("trades", []) if t.get("status") == "OPEN"]
-
-    if not open_trades:
-        print("No open positions to check.")
+    broker = IBKRBroker()
+    print("\nConnecting to IBKR...")
+    try:
+        broker.connect()
+    except ConnectionError as e:
+        print(f"  ERROR: {e}")
         return
 
-    print(f"\nChecking {len(open_trades)} open position(s)...\n")
+    # Show account summary
+    acct = broker.get_account_summary()
+    print(f"\n  Account Balance: ${acct.get('balance', 0):,.2f}")
+    if acct.get("unrealized_pnl") is not None:
+        print(f"  Unrealized P&L:  ${acct['unrealized_pnl']:,.2f}")
 
-    for trade in open_trades:
-        t_ticker = trade["ticker"]
-        if ticker and t_ticker != ticker:
-            continue
+    # Show positions
+    positions = broker.get_positions()
+    if positions:
+        print(f"\n  Open Positions:")
+        for p in positions:
+            direction = "LONG" if p["quantity"] > 0 else "SHORT"
+            print(f"    {p['symbol']} {direction} x{abs(p['quantity'])} @ avg {p['avg_cost']:.2f}")
+    else:
+        print(f"\n  No open positions.")
 
-        try:
-            df = fetch_ohlc(t_ticker, "15m", "1d")
-            latest = df.iloc[-1]
-            high = latest["high"]
-            low = latest["low"]
-            current = latest["close"]
+    # Show open orders
+    orders = broker.get_open_orders()
+    if orders:
+        print(f"\n  Open Orders:")
+        for o in orders:
+            price = o.get("limit_price") or o.get("stop_price") or ""
+            price_str = f"@ {price}" if price else ""
+            parent_str = f" (child of #{o['parent_id']})" if o["parent_id"] else ""
+            print(f"    #{o['order_id']} {o['action']} {o['quantity']}x {o['symbol']} "
+                  f"{o['order_type']} {price_str} [{o['status']}]{parent_str}")
+    else:
+        print(f"\n  No open orders.")
 
-            entry = trade["entry_price"]
-            sl = trade["stop_loss"]
-            tp = trade["take_profit"]
-            direction = trade["direction"]
-
-            print(f"  {t_ticker} {direction} @ ${entry:.2f}")
-            print(f"    Current: ${current:.2f} | SL: ${sl:.2f} | TP: ${tp:.2f}")
-
-            hit = None
-            if direction == "LONG":
-                if low <= sl:
-                    hit = ("SL_HIT", sl)
-                elif high >= tp:
-                    hit = ("TP_HIT", tp)
-            else:
-                if high >= sl:
-                    hit = ("SL_HIT", sl)
-                elif low <= tp:
-                    hit = ("TP_HIT", tp)
-
-            if hit:
-                reason, exit_price = hit
-                if direction == "LONG":
-                    pnl = (exit_price - entry) * trade.get("quantity", 0)
-                else:
-                    pnl = (entry - exit_price) * trade.get("quantity", 0)
-                print(f"    >>> {reason} at ${exit_price:.2f} | P&L: ${pnl:.2f}")
-
-                from journal.logger import update_trade_close
-                balance_after = trade.get("account_balance_before", 100000) + pnl
-                update_trade_close(trade["id"], {
-                    "exit_price": exit_price,
-                    "exit_reason": reason,
-                    "pnl_dollars": round(pnl, 2),
-                    "pnl_pct": round(pnl / (entry * trade.get("quantity", 1)) * 100, 2),
-                }, balance_after)
-            else:
-                unrealized = 0
-                if direction == "LONG":
-                    unrealized = (current - entry) * trade.get("quantity", 0)
-                else:
-                    unrealized = (entry - current) * trade.get("quantity", 0)
-                print(f"    Still open | Unrealized P&L: ${unrealized:.2f}")
-        except Exception as e:
-            print(f"    Error checking {t_ticker}: {e}")
-        print()
+    broker.disconnect()
+    print()
 
 
 def cmd_stats():
@@ -408,8 +439,9 @@ def main():
     p_analyze.add_argument("ticker", help="Ticker symbol (e.g. AAPL, BTC-USD)")
     p_analyze.add_argument("--balance", type=float, help="Override starting balance")
 
-    p_check = sub.add_parser("check-positions", help="Check open positions for fills")
-    p_check.add_argument("--ticker", help="Filter by ticker")
+    sub.add_parser("live", help="Start continuous live trading (streams bars, auto-analyzes)")
+
+    sub.add_parser("check-positions", help="Check open IBKR positions and orders")
 
     sub.add_parser("stats", help="Show trading statistics")
 
@@ -430,10 +462,14 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "analyze":
+    if args.command == "live":
+        from live import LiveTrader
+        trader = LiveTrader(ticker="MES")
+        trader.start()
+    elif args.command == "analyze":
         cmd_analyze(args.ticker, args.balance)
     elif args.command == "check-positions":
-        cmd_check_positions(args.ticker if hasattr(args, "ticker") else None)
+        cmd_check_positions()
     elif args.command == "stats":
         cmd_stats()
     elif args.command == "journal":

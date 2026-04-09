@@ -43,6 +43,9 @@ def decide_trade(ict_context: dict, min_score: int = MIN_CONFLUENCE_SCORE) -> di
         "reasoning": "",
         "confidence": 0,
         "confluence_score": score,
+        "htf_bias": htf_bias,
+        "setup_type": "none",
+        "ict_concepts_used": [],
     }
 
     # Rule 1: Must have directional bias

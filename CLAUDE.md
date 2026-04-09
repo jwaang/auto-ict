@@ -4,16 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-ICT Paper Trading Simulator — applies Inner Circle Trader (ICT) methodology to paper trade any ticker. Fetches OHLC data, algorithmically detects ICT concepts (FVGs, OBs, market structure, etc.), sends context to Claude for trade decisions, simulates positions with full P&L tracking, and logs everything for re-analysis. Includes a walk-forward backtesting engine with no look-ahead bias.
+ICT Paper Trading Simulator — applies Inner Circle Trader (ICT) methodology to paper trade MES (Micro E-mini S&P 500) futures via Interactive Brokers. Fetches OHLC data from IBKR, algorithmically detects ICT concepts (FVGs, OBs, market structure, etc.), makes trade decisions (rule-based or Claude AI), places bracket orders (entry + SL + TP) on IBKR paper trading account, and logs everything for re-analysis. Includes a walk-forward backtesting engine with no look-ahead bias.
 
-**No real trades are executed. This is a strategy testing tool.**
+**Paper trading only — uses IBKR paper account. No real money at risk.**
 
 ## Commands
 
 ```bash
-# Run ICT analysis on a ticker (fetches data -> detects levels -> AI decision -> paper trade)
-py main.py analyze BTC-USD
-py main.py analyze AAPL --balance 50000
+# Start continuous live trading (streams bars, auto-analyzes, places orders)
+py main.py live
+
+# One-shot ICT analysis on MES via IBKR
+py main.py analyze MES
+
+# Check open IBKR positions and orders
+py main.py check-positions
+
+# Show trading statistics / journal
+py main.py stats
+py main.py journal --limit 20
 
 # Backtest on historical 1-minute OHLCV data
 py main.py backtest path/to/ohlcv-1m.csv
@@ -23,21 +32,11 @@ py main.py backtest data.csv --entry-tf 5min                    # default: 15min
 py main.py backtest data.csv --min-score 50 --balance 50000
 py main.py backtest data.csv --step 8 --save logs/results.json
 
-# Check open positions for SL/TP fills
-py main.py check-positions
-
-# Show trading statistics / journal
-py main.py stats
-py main.py journal --limit 20
-
 # Run tests
 py -m pytest tests/ -v              # all 55 tests
 py -m pytest tests/test_no_lookahead.py -v   # causality tests only
 py -m pytest tests/test_trading.py -v        # trading module tests only
 py -m pytest tests/ -k "test_fvg"            # run tests matching pattern
-
-# Start real-time WebSocket position monitor (runs continuously)
-py monitor.py
 
 # Launch Streamlit dashboard
 streamlit run ui/app.py
@@ -47,31 +46,40 @@ streamlit run ui/app.py
 
 ### Two Execution Paths
 
-1. **Live Analysis** — `main.py analyze TICKER` fetches OHLC from Yahoo Finance, runs ICT detection, calls Claude CLI for trade decisions, opens paper positions. Scheduled via Windows Task Scheduler every 30 min.
+1. **Live Trading (IBKR)** — `main.py live` runs a continuous daemon that connects to IBKR, streams live 15m bars, and triggers ICT analysis each time a bar completes. When signals fire during kill zones, bracket orders (entry + SL + TP) are placed on the IBKR paper account. The daemon also monitors open positions for fills and handles session-end close. One-shot analysis available via `main.py analyze MES`.
 
 2. **Backtesting** — `main.py backtest CSV` loads historical 1m data, resamples to all timeframes, walks forward through entry bars running the full ICT detection pipeline with point-in-time windowed data, uses deterministic rule-based decisions (no AI calls), simulates trades with position/risk management.
 
 ### Data Flow
 
 ```
-Data Source (Yahoo Finance live OR historical CSV)
-  -> ict/confluence.py (runs all ICT detectors across 4 timeframes)
-  -> ai/analyst.py (live) OR backtest/rules.py (backtest)
-  -> trading/risk.py validates -> positions.py opens trade
-  -> SL/TP monitoring (monitor.py live, bar-by-bar in backtest)
+Live: live.py streams 15m bars from IBKR
+  -> On bar close: ict/confluence.py (runs all ICT detectors across 4 timeframes)
+  -> backtest/rules.py (rule-based) OR ai/analyst.py (AI)
+  -> trading/risk.py validates (futures-aware)
+  -> broker/ibkr.py places bracket order on IBKR paper account
+  -> live.py monitors for IBKR fill events + session-end close
   -> journal/logger.py logs everything
+
+Backtest: Historical CSV (data/historical.py)
+  -> ict/confluence.py (same detection pipeline)
+  -> backtest/rules.py (deterministic)
+  -> trading/positions.py simulates fills
+  -> journal/logger.py logs results
 ```
 
 ### Module Responsibilities
 
 | Module | Key File | Does |
 |--------|----------|------|
-| `data/` | `yahoo.py`, `historical.py` | OHLC fetching (Yahoo REST) + historical CSV loader with contract stitching and resampling |
+| `live.py` | `live.py` | Continuous streaming daemon — streams bars, triggers analysis, monitors fills, session-end close |
+| `broker/` | `ibkr.py` | IBKR connection, contract management, bracket orders, market data, live bar streaming |
+| `data/` | `historical.py` | Historical CSV loader with contract stitching and resampling (backtesting only) |
 | `ict/` | `confluence.py`, `smc_patched.py`, `smc_adapter.py` | ICT detection engine — vendored SMC library (bias-free) + adapter + confluence scoring |
 | `ai/` | `analyst.py` | Calls Claude Code CLI (`claude -p --model claude-sonnet-4-20250514`), parses JSON response |
-| `trading/` | `risk.py`, `positions.py`, `account.py` | Paper trade lifecycle, risk validation, position sizing |
+| `trading/` | `risk.py`, `positions.py`, `account.py` | Risk validation (futures-aware), position simulation (backtest), account tracking |
 | `backtest/` | `engine.py`, `rules.py`, `report.py` | Walk-forward backtesting engine with rule-based decisions and analytics |
-| `journal/` | `logger.py` | JSON trade log with ICT context snapshots |
+| `journal/` | `logger.py` | JSON trade log with ICT context snapshots and IBKR order IDs |
 | `tests/` | `test_no_lookahead.py`, `test_trading.py`, `test_data_historical.py` | 55 regression tests (causality, trading, data) |
 
 ### Vendored SMC Library (`ict/smc_patched.py`)
@@ -139,9 +147,10 @@ Crypto tickers (detected by `is_crypto()` or `--ticker BTC-USD`) bypass kill zon
 
 Enforced in `trading/risk.py`:
 - Max 1% account per trade, minimum 2:1 R:R
-- Max 3 concurrent positions, SL must be 0.1-5% from entry
+- Max 3 concurrent positions
+- SL bounds: 0.1-5% from entry (stocks/crypto) or 2-50 points (futures)
 - 10% drawdown from peak = circuit breaker
-- Position sizing: `risk_amount / sl_distance`
+- Position sizing: `risk_amount / sl_distance` (stocks/crypto), `floor(risk_amount / (sl_points * point_value))` integer contracts (futures)
 
 ## Trading Rules
 
@@ -160,20 +169,28 @@ Enforced in `trading/risk.py`:
 
 | Source | Used For | Auth |
 |--------|----------|------|
-| Yahoo Finance | Live multi-timeframe OHLC | None (urllib) |
+| Interactive Brokers | Live multi-timeframe OHLC + order execution | Local TCP (TWS/Gateway) |
 | Databento CSV | Historical backtesting (1m OHLCV) | Downloaded files |
-| Alpaca Markets | Real-time WebSocket for position monitoring | Free API key (`.env`) |
 
-## Credentials (`.env`)
+## IBKR Setup
 
-```
-ALPACA_API_KEY=...
-ALPACA_SECRET_KEY=...
-```
+1. Install TWS or IB Gateway, log in with Paper Trading mode
+2. Enable API: Edit > Global Config > API > Settings > Enable ActiveX and Socket Clients
+3. Port: 7497 (TWS paper) or 4002 (Gateway paper)
+4. Subscribe to CME Real-Time market data (non-professional, ~$1-5/mo)
+5. No API keys needed — `ib_insync` connects via local TCP socket
+
+## MES Contract Details
+
+- Symbol: MES on CME/GLOBEX (Micro E-mini S&P 500)
+- Point value: $5.00/point, tick size: 0.25 ($1.25/tick)
+- Trading hours: Sun 5PM CT - Fri 4PM CT, daily halt 4-5 PM CT
+- Contract rolls quarterly (Mar/Jun/Sep/Dec) — auto-resolved via `qualifyContracts()`
+- Integer contract quantities only
 
 ## Ticker Format
 
-Yahoo Finance uses `BTC-USD`, Alpaca uses `BTC/USD`. Conversion helpers in `config.py`: `ticker_to_alpaca()` and `alpaca_to_ticker()`. Crypto detection (`is_crypto()` in `killzones.py`) checks for `-USD`, `-USDT` suffixes.
+Futures use base symbol (e.g. "MES", "ES"). The `is_futures()` helper in `config.py` detects futures symbols. Crypto detection (`is_crypto()` in `killzones.py`) checks for `-USD`, `-USDT` suffixes.
 
 ## Historical Data Format (Databento)
 
