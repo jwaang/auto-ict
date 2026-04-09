@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 logs/
 datasets/
+historical/
+.claude/
+=0.0.27
