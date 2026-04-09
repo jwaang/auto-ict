@@ -5,7 +5,7 @@ are reproducible and fast. The rules encode the same ICT methodology
 that the AI system prompt enforces.
 """
 
-from config import MIN_CONFLUENCE_SCORE, MIN_RR_RATIO
+from config import MIN_CONFLUENCE_SCORE, MIN_RR_RATIO, SL_ATR_MULTIPLIER, is_futures
 from ict.killzones import is_in_dead_zone, is_in_killzone, is_crypto
 
 
@@ -86,7 +86,7 @@ def decide_trade(ict_context: dict, min_score: int = MIN_CONFLUENCE_SCORE) -> di
 
     # Find entry, SL, TP from ICT levels
     entry_price, stop_loss, take_profit, setup_type, concepts = _find_trade_levels(
-        direction, entry_data, setup_data, current_price
+        direction, entry_data, setup_data, current_price, ticker
     )
 
     if entry_price is None:
@@ -126,12 +126,13 @@ def _find_trade_levels(
     entry_data: dict,
     setup_data: dict,
     current_price: float,
+    ticker: str = "",
 ) -> tuple[float | None, float | None, float | None, str, list[str]]:
     """Find entry, SL, TP from ICT levels on the entry timeframe.
 
     Priority order for entry zones:
     1. FVG+OB overlap (strongest confluence)
-    2. Unmitigated OB aligned with bias
+    2. Unmitigated OB aligned with bias (skipped for futures — too noisy)
     3. Unfilled FVG aligned with bias
 
     Returns:
@@ -140,6 +141,9 @@ def _find_trade_levels(
     atr = entry_data.get("atr_current") or 0
     if atr == 0:
         return None, None, None, "", []
+
+    # Per-asset SL ATR multiplier
+    sl_mult = SL_ATR_MULTIPLIER.get(ticker.upper(), SL_ATR_MULTIPLIER.get("default", 0.5))
 
     obs = entry_data.get("unmitigated_obs", [])
     fvgs = entry_data.get("unfilled_fvgs", [])
@@ -153,21 +157,21 @@ def _find_trade_levels(
     setup_type = ""
 
     # Strategy 1: FVG+OB overlap
-    entry_price, stop_loss = _find_fvg_ob_overlap(direction, aligned_obs, aligned_fvgs, current_price, atr)
+    entry_price, stop_loss = _find_fvg_ob_overlap(direction, aligned_obs, aligned_fvgs, current_price, atr, sl_mult)
     if entry_price:
         setup_type = "FVG+OB overlap"
         concepts = ["FVG", "OB", "confluence"]
 
-    # Strategy 2: OB entry
-    if entry_price is None and aligned_obs:
-        entry_price, stop_loss = _find_ob_entry(direction, aligned_obs, current_price, atr)
+    # Strategy 2: OB entry (skip for futures — standalone OBs too noisy on ES/MES)
+    if entry_price is None and aligned_obs and not is_futures(ticker):
+        entry_price, stop_loss = _find_ob_entry(direction, aligned_obs, current_price, atr, sl_mult)
         if entry_price:
             setup_type = "Order Block"
             concepts = ["OB"]
 
     # Strategy 3: FVG entry
     if entry_price is None and aligned_fvgs:
-        entry_price, stop_loss = _find_fvg_entry(direction, aligned_fvgs, current_price, atr)
+        entry_price, stop_loss = _find_fvg_entry(direction, aligned_fvgs, current_price, atr, sl_mult)
         if entry_price:
             setup_type = "Fair Value Gap"
             concepts = ["FVG"]
@@ -201,6 +205,7 @@ def _find_fvg_ob_overlap(
     fvgs: list,
     current_price: float,
     atr: float,
+    sl_mult: float = 0.5,
 ) -> tuple[float | None, float | None]:
     """Find an entry where an FVG and OB overlap."""
     for ob in obs:
@@ -214,11 +219,10 @@ def _find_fvg_ob_overlap(
                 midpoint = (overlap_lo + overlap_hi) / 2
 
                 if direction == "LONG" and midpoint < current_price:
-                    # Enter at current price (pullback already happened or entering on approach)
-                    sl = ob_lo - atr * 0.5
+                    sl = ob_lo - atr * sl_mult
                     return current_price, sl
                 elif direction == "SHORT" and midpoint > current_price:
-                    sl = ob_hi + atr * 0.5
+                    sl = ob_hi + atr * sl_mult
                     return current_price, sl
     return None, None
 
@@ -228,6 +232,7 @@ def _find_ob_entry(
     obs: list,
     current_price: float,
     atr: float,
+    sl_mult: float = 0.5,
 ) -> tuple[float | None, float | None]:
     """Find entry from the nearest bias-aligned OB."""
     best = None
@@ -255,9 +260,9 @@ def _find_ob_entry(
         return None, None
 
     if direction == "LONG":
-        sl = best["low"] - atr * 0.5
+        sl = best["low"] - atr * sl_mult
     else:
-        sl = best["high"] + atr * 0.5
+        sl = best["high"] + atr * sl_mult
 
     return current_price, sl
 
@@ -267,6 +272,7 @@ def _find_fvg_entry(
     fvgs: list,
     current_price: float,
     atr: float,
+    sl_mult: float = 0.5,
 ) -> tuple[float | None, float | None]:
     """Find entry from the nearest bias-aligned FVG."""
     best = None
@@ -292,9 +298,9 @@ def _find_fvg_entry(
         return None, None
 
     if direction == "LONG":
-        sl = best["bottom"] - atr * 0.5
+        sl = best["bottom"] - atr * sl_mult
     else:
-        sl = best["top"] + atr * 0.5
+        sl = best["top"] + atr * sl_mult
 
     return current_price, sl
 
@@ -306,40 +312,46 @@ def _find_take_profit(
     entry_data: dict,
     setup_data: dict,
 ) -> float:
-    """Find TP from liquidity targets or use default R:R multiple.
+    """Find TP from the NEAREST valid liquidity target.
 
-    Priority:
-    1. Opposite-side liquidity zone (buy-side for LONG, sell-side for SHORT)
-    2. PDH/PDL levels
-    3. Default 3:1 R:R from entry
+    Collects all candidate targets, sorts by distance (nearest first),
+    and returns the closest one meeting minimum 1R distance.
+    Falls back to 3R if no valid targets.
     """
     risk = abs(entry - sl)
+    if risk == 0:
+        return entry
 
-    # Try liquidity targets
+    candidates = []
+
+    # Collect liquidity targets
     liq_zones = entry_data.get("liquidity_zones", []) + setup_data.get("liquidity_zones", [])
     for zone in liq_zones:
         level = zone.get("level", 0)
         if direction == "LONG" and zone.get("type") == "buy_side" and level > entry:
-            reward = level - entry
-            if reward / risk >= MIN_RR_RATIO:
-                return round(level, 2)
+            if (level - entry) / risk >= 1.0:
+                candidates.append(level)
         elif direction == "SHORT" and zone.get("type") == "sell_side" and level < entry:
-            reward = entry - level
-            if reward / risk >= MIN_RR_RATIO:
-                return round(level, 2)
+            if (entry - level) / risk >= 1.0:
+                candidates.append(level)
 
-    # Try PDH/PDL
+    # Collect PDH/PDL targets
     pdhl = entry_data.get("previous_high_low", {})
     if direction == "LONG":
         for key in ("pdh", "pwh"):
             level = pdhl.get(key)
-            if level and level > entry and (level - entry) / risk >= MIN_RR_RATIO:
-                return round(level, 2)
+            if level and level > entry and (level - entry) / risk >= 1.0:
+                candidates.append(level)
     else:
         for key in ("pdl", "pwl"):
             level = pdhl.get(key)
-            if level and level < entry and (entry - level) / risk >= MIN_RR_RATIO:
-                return round(level, 2)
+            if level and level < entry and (entry - level) / risk >= 1.0:
+                candidates.append(level)
+
+    # Sort by distance from entry (nearest first) and pick closest
+    if candidates:
+        candidates.sort(key=lambda l: abs(l - entry))
+        return round(candidates[0], 2)
 
     # Default: 3R target
     if direction == "LONG":

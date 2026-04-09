@@ -95,8 +95,15 @@ CONFLUENCE_WEIGHTS = {
     "silver_bullet_window": 5,   # In a Silver Bullet window
     "mss_present": 7,            # Market Structure Shift (CHoCH + displacement)
     "ce_at_ob": 5,               # Consequent Encroachment at OB midpoint
+    "breaker_block": 8,          # Breaker Block (mitigated OB + sweep, flipped polarity)
+    "ifvg_present": 6,           # Inversion FVG (fully mitigated FVG, flipped role)
+    "po3_judas_swing": 10,       # Power of 3 Judas Swing confirmed
+    "silver_bullet_ny_am_bonus": 5,  # Extra weight for 10-11 AM ET Silver Bullet
 }
 MIN_CONFLUENCE_SCORE = 60  # Minimum score to call Claude API
+
+# HTF warmup: extra days of data loaded before --start for bias detection
+HTF_WARMUP_DAYS = 90
 
 # Claude API
 USE_AI_ANALYSIS = False  # Set True to use Claude for trade decisions, False for rule-based only
@@ -130,6 +137,11 @@ MES_POINT_VALUE = 5.0       # $5 per point
 MES_TICK_SIZE = 0.25         # Min tick = 0.25 points
 MES_TICK_VALUE = 1.25        # $1.25 per tick
 
+# Spread/slippage for backtesting (points, not percentage)
+# Set to 0.0 to disable (e.g. for unit tests)
+SPREAD_POINTS = 0.0          # Round-trip bid-ask spread in points (set 0.50 for ES backtests)
+SLIPPAGE_POINTS = 0.0        # Additional slippage per fill in points (set 0.25 for ES backtests)
+
 # Monitor settings
 ANALYSIS_INTERVAL_MINUTES = 30  # How often to run ICT analysis
 MONITOR_CHECK_INTERVAL = 60     # Seconds between journal re-reads when no positions
@@ -141,6 +153,22 @@ MAX_SL_DISTANCE_PCT = 0.05    # SL must be at most 5% from entry
 # Futures-specific risk bounds (point-based)
 FUTURES_MIN_SL_DISTANCE_POINTS = 2.0    # Min 2 points ($10) SL
 FUTURES_MAX_SL_DISTANCE_POINTS = 50.0   # Max 50 points ($250) SL
+
+# Per-asset SL ATR multiplier (buffer beyond the ICT level)
+SL_ATR_MULTIPLIER = {
+    "ES": 0.5,
+    "MES": 0.5,
+    "NQ": 0.75,
+    "MNQ": 0.75,
+    "BTC-USD": 1.5,
+    "ETH-USD": 1.5,
+    "default": 0.5,
+}
+
+# Trade management
+TRADE_MANAGEMENT_ENABLED = False  # Set True to enable partial TP + trailing SL
+BE_MOVE_THRESHOLD_R = 1.0      # Move SL to breakeven after this many R of profit
+PARTIAL_CLOSE_PCT = 0.50       # Close 50% of position at 1R
 
 # Known futures symbols
 FUTURES_SYMBOLS = {"MES", "ES", "NQ", "MNQ", "YM", "MYM", "RTY", "M2K"}

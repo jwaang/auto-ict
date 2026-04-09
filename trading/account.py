@@ -12,6 +12,7 @@ class Account:
     balance: float = 0.0
     peak_balance: float = 0.0
     equity_history: list[dict] = field(default_factory=list)
+    circuit_breaker_triggered: bool = False
 
     def __post_init__(self):
         if self.balance == 0.0:
@@ -53,11 +54,17 @@ class Account:
         })
 
     def is_circuit_breaker_hit(self) -> bool:
-        """Check if drawdown from peak exceeds MAX_DRAWDOWN_PCT."""
+        """Check if drawdown from peak exceeds MAX_DRAWDOWN_PCT or was already triggered."""
+        if self.circuit_breaker_triggered:
+            return True
         if self.peak_balance == 0:
             return False
         drawdown_pct = (self.peak_balance - self.balance) / self.peak_balance * 100
         return drawdown_pct >= MAX_DRAWDOWN_PCT
+
+    def trigger_circuit_breaker(self):
+        """Latch the circuit breaker — halts all trading for the session."""
+        self.circuit_breaker_triggered = True
 
     def get_drawdown_pct(self) -> float:
         """Current drawdown percentage from peak."""

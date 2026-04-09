@@ -494,6 +494,115 @@ class IBKRBroker:
         }).reset_index(drop=True)
         return agg
 
+    # ─── Historical Data Download ─────────────────────────────────────
+
+    def download_historical(
+        self,
+        symbol: str = "ES",
+        duration_days: int = 90,
+        bar_size: str = "1 min",
+        exchange: str = "CME",
+        save_path: str | None = None,
+    ) -> pd.DataFrame:
+        """Download historical 1m OHLCV data from IBKR and save as CSV.
+
+        IBKR limits 1-minute requests to 1 day per call, so this makes
+        one request per day with pacing delays (~2s between requests).
+
+        Args:
+            symbol: Futures symbol (e.g. "ES", "MES", "NQ")
+            duration_days: Number of days to download
+            bar_size: Bar size string (default "1 min")
+            exchange: Exchange (default "CME")
+            save_path: Path to save CSV. If None, auto-generates in historical/
+
+        Returns:
+            Combined DataFrame with all bars
+        """
+        # Resolve front-month contract
+        generic = Future(symbol=symbol, exchange=exchange)
+        details = self.ib.reqContractDetails(generic)
+        if not details:
+            raise RuntimeError(f"No contracts found for {symbol} on {exchange}")
+
+        details.sort(key=lambda d: d.contract.lastTradeDateOrContractMonth)
+        contract = self.ib.qualifyContracts(details[0].contract)[0]
+        log.info(f"Downloading {duration_days} days of {bar_size} data for {contract.localSymbol}")
+
+        all_bars = []
+
+        # ES futures trade Sun 5 PM CT - Fri 4 PM CT with a daily halt 4-5 PM CT.
+        # A full session is ~23 hours. To capture it with "1 D" duration, we set
+        # endDateTime to the session close: 5 PM ET (= 6 PM ET during EDT).
+        # Walking backwards, each request covers one full trading session.
+        from zoneinfo import ZoneInfo
+        _ET = ZoneInfo("America/New_York")
+
+        # Start from the next session close (5 PM ET today or tomorrow)
+        now_et = datetime.now(_ET)
+        session_end = now_et.replace(hour=17, minute=0, second=0, microsecond=0)
+        if now_et.hour >= 17:
+            # Past today's close, use tomorrow's
+            session_end += pd.Timedelta(days=1)
+
+        for day in range(duration_days):
+            # Convert session end to UTC string for IBKR
+            end_utc = session_end.astimezone(timezone.utc)
+            end_str = end_utc.strftime("%Y%m%d-%H:%M:%S")
+            date_label = (session_end - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            log.info(f"  Day {day + 1}/{duration_days}: {date_label}...")
+
+            try:
+                bars = self.ib.reqHistoricalData(
+                    contract,
+                    endDateTime=end_str,
+                    durationStr="1 D",
+                    barSizeSetting=bar_size,
+                    whatToShow="TRADES",
+                    useRTH=False,
+                    formatDate=1,
+                )
+            except Exception as e:
+                log.warning(f"  Error on day {day + 1}: {e}, skipping")
+                session_end -= pd.Timedelta(days=1)
+                time.sleep(2)
+                continue
+
+            if bars:
+                df = self._bars_to_dataframe(bars)
+                all_bars.append(df)
+                log.info(f"    Got {len(df)} bars")
+            else:
+                log.info(f"    No bars (weekend/holiday?)")
+
+            # Move back 1 calendar day
+            session_end -= pd.Timedelta(days=1)
+
+            # IBKR pacing: 2s between requests (max 6 per 10s)
+            time.sleep(2)
+
+        if not all_bars:
+            raise RuntimeError("No data downloaded")
+
+        combined = pd.concat(all_bars, ignore_index=True)
+        combined = combined.sort_values("timestamp").drop_duplicates(
+            subset=["timestamp"], keep="last"
+        ).reset_index(drop=True)
+
+        # Save CSV
+        if save_path is None:
+            from config import PROJECT_ROOT
+            hist_dir = PROJECT_ROOT / "historical"
+            hist_dir.mkdir(exist_ok=True)
+            start_date = combined["timestamp"].min().strftime("%Y%m%d")
+            end_date = combined["timestamp"].max().strftime("%Y%m%d")
+            save_path = str(hist_dir / f"{symbol}-{start_date}-{end_date}.ohlcv-1m.csv")
+
+        combined.to_csv(save_path, index=False)
+        log.info(f"Saved {len(combined)} bars to {save_path}")
+
+        return combined
+
     @staticmethod
     def _snap_to_tick(price: float, tick_size: float = MES_TICK_SIZE) -> float:
         """Snap a price to the nearest valid tick."""

@@ -106,6 +106,21 @@ def _analyze_smc(df: pd.DataFrame, label: str, atr: pd.Series) -> dict:
     unfilled_fvgs = adapter.get_unfilled_fvgs(fvgs)
     unmitigated_obs = adapter.get_unmitigated_obs(obs)
 
+    # Power of 3 / Judas Swing (entry/setup TFs only)
+    po3 = None
+    if label in ("setup", "entry") and current_ts is not None:
+        from ict.po3 import detect_po3_setup
+        po3 = detect_po3_setup(df, pd.Timestamp(current_ts), bias)
+
+    # Breaker Blocks and Inversion FVGs
+    from ict.breaker_blocks import detect_breaker_blocks, get_active_breakers
+    from ict.ifvg import detect_ifvgs, get_active_ifvgs
+    breaker_blocks = detect_breaker_blocks(obs, liquidity_zones)
+    ifvgs = detect_ifvgs(fvgs)
+    atr_val = float(atr.iloc[-1]) if not pd.isna(atr.iloc[-1]) else 0
+    active_breakers = get_active_breakers(breaker_blocks, current_price, atr_val) if atr_val else []
+    active_ifvgs = get_active_ifvgs(ifvgs, current_price, atr_val) if atr_val else []
+
     return {
         "timeframe": label,
         "current_price": current_price,
@@ -129,6 +144,11 @@ def _analyze_smc(df: pd.DataFrame, label: str, atr: pd.Series) -> dict:
         "retracement": retracement,
         "mss_events": mss_events,
         "silver_bullet": silver_bullet,
+        "breaker_blocks": breaker_blocks,
+        "active_breakers": active_breakers,
+        "ifvgs": ifvgs,
+        "active_ifvgs": active_ifvgs,
+        "po3": po3,
     }
 
 
@@ -516,9 +536,12 @@ def score_setup(
                 score += w.get("pdh_pdl_target", 0)
                 break
 
-    # NEW: Silver Bullet window
-    if entry.get("silver_bullet"):
+    # NEW: Silver Bullet window (NY AM 10-11 ET gets extra bonus)
+    sb = entry.get("silver_bullet")
+    if sb:
         score += w.get("silver_bullet_window", 0)
+        if sb == "sb_ny_am":
+            score += w.get("silver_bullet_ny_am_bonus", 0)
 
     # NEW: Market Structure Shift
     if entry.get("mss_events"):
@@ -527,5 +550,24 @@ def score_setup(
     # NEW: CE at OB confluence
     if any(c["type"] == "ce_at_ob" for c in confluences):
         score += w.get("ce_at_ob", 0)
+
+    # Power of 3 / Judas Swing
+    po3 = entry.get("po3")
+    if po3 and po3.get("direction") == htf_bias:
+        score += w.get("po3_judas_swing", 0)
+
+    # Breaker Block near price aligned with bias
+    active_breakers = entry.get("active_breakers", [])
+    if htf_bias != "neutral" and active_breakers:
+        aligned_breakers = [bb for bb in active_breakers if bb["type"] == htf_bias]
+        if aligned_breakers:
+            score += w.get("breaker_block", 0)
+
+    # Inversion FVG near price aligned with bias
+    active_ifvgs = entry.get("active_ifvgs", [])
+    if htf_bias != "neutral" and active_ifvgs:
+        aligned_ifvgs = [ifvg for ifvg in active_ifvgs if ifvg["type"] == htf_bias]
+        if aligned_ifvgs:
+            score += w.get("ifvg_present", 0)
 
     return min(score, 100)

@@ -76,13 +76,30 @@ def load_continuous_contract(
 ) -> pd.DataFrame:
     """Load CSV and stitch front-month contracts into a continuous series.
 
-    Uses volume-based roll detection: at each timestamp where multiple
-    contracts trade, the one with higher volume is front-month. Falls back
-    to the predefined roll schedule when volume is ambiguous.
+    Supports two CSV formats:
+    - Databento: has ts_event, symbol columns (multi-contract, needs stitching)
+    - IBKR/simple: has timestamp, open, high, low, close, volume (single series)
 
     Returns:
         Single continuous DataFrame with columns: timestamp, open, high, low, close, volume
     """
+    # Detect format by peeking at columns
+    header = pd.read_csv(filepath, nrows=0).columns.tolist()
+
+    if "symbol" not in header and "ts_event" not in header:
+        # IBKR / simple format — already a single continuous series
+        df = pd.read_csv(filepath)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        for col in ("open", "high", "low", "close"):
+            df[col] = df[col].astype(float)
+        df["volume"] = df["volume"].astype(int)
+        if start:
+            df = df[df["timestamp"] >= pd.Timestamp(start, tz="UTC")]
+        if end:
+            df = df[df["timestamp"] <= pd.Timestamp(end, tz="UTC")]
+        return df.sort_values("timestamp").reset_index(drop=True)
+
+    # Databento format — load and stitch
     df = load_csv(filepath, start=start, end=end)
 
     if df.empty:

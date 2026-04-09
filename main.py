@@ -11,6 +11,8 @@ import argparse
 import json
 import sys
 
+import pandas as pd
+
 from config import (
     MIN_CONFLUENCE_SCORE,
     MES_POINT_VALUE,
@@ -375,10 +377,12 @@ def cmd_backtest(
     step: int | None = None,
     save_path: str | None = None,
     show_trades: int = 20,
+    strategy: str = "default",
 ):
     """Run a walk-forward backtest on historical data."""
     from backtest.engine import run_backtest
     from backtest.report import print_report, print_trades, save_results, generate_equity_csv
+    from config import HTF_WARMUP_DAYS
     from data.historical import load_continuous_contract
 
     balance = balance or STARTING_BALANCE
@@ -391,13 +395,26 @@ def cmd_backtest(
     print(f"  Entry TF: {entry_tf}")
     print(f"  Balance: ${balance:,.2f}")
     print(f"  Min Score: {min_score}")
+    print(f"  Strategy: {strategy}")
     print(f"{'='*60}\n")
 
-    # Load data
+    # Load data — extend start date for HTF warmup when needed
+    load_start = start
+    trade_start = None
+    if start:
+        warmup_start = pd.Timestamp(start) - pd.Timedelta(days=HTF_WARMUP_DAYS)
+        load_start = warmup_start.strftime("%Y-%m-%d")
+        trade_start = pd.Timestamp(start, tz="UTC")
+
     print("[1/3] Loading historical data...")
     try:
-        df_1m = load_continuous_contract(data_path, start=start, end=end)
-        print(f"      Loaded {len(df_1m):,} bars ({df_1m['timestamp'].min()} to {df_1m['timestamp'].max()})")
+        df_1m = load_continuous_contract(data_path, start=load_start, end=end)
+        if start:
+            warmup_count = len(df_1m[df_1m["timestamp"] < trade_start])
+            print(f"      Loaded {len(df_1m):,} bars ({df_1m['timestamp'].min()} to {df_1m['timestamp'].max()})")
+            print(f"      HTF warmup: {warmup_count:,} bars before {start}")
+        else:
+            print(f"      Loaded {len(df_1m):,} bars ({df_1m['timestamp'].min()} to {df_1m['timestamp'].max()})")
     except Exception as e:
         print(f"  ERROR: Failed to load data: {e}")
         return
@@ -411,6 +428,8 @@ def cmd_backtest(
         ticker=ticker,
         entry_tf=entry_tf,
         step_bars=step,
+        strategy=strategy,
+        trade_start=trade_start,
     )
 
     # Report
@@ -431,6 +450,97 @@ def cmd_backtest(
         save_results(result, default_path)
 
 
+def cmd_optimize(
+    data_path: str,
+    ticker: str = "ES",
+    entry_tf: str = "15min",
+    thresholds: str = "30,40,50,60,70,80",
+    balance: float | None = None,
+    start: str | None = None,
+    end: str | None = None,
+):
+    """Run walk-forward optimization of confluence threshold."""
+    from backtest.optimize import optimize_threshold
+    from data.historical import load_continuous_contract
+
+    balance = balance or STARTING_BALANCE
+    threshold_list = [int(t.strip()) for t in thresholds.split(",")]
+
+    print(f"\n{'='*60}")
+    print(f"  Walk-Forward Threshold Optimization")
+    print(f"  Data: {data_path}")
+    print(f"  Ticker: {ticker}")
+    print(f"  Entry TF: {entry_tf}")
+    print(f"  Thresholds: {threshold_list}")
+    print(f"{'='*60}\n")
+
+    # Load data with HTF warmup
+    load_start = start
+    if start:
+        from config import HTF_WARMUP_DAYS
+        warmup_start = pd.Timestamp(start) - pd.Timedelta(days=HTF_WARMUP_DAYS)
+        load_start = warmup_start.strftime("%Y-%m-%d")
+
+    df_1m = load_continuous_contract(data_path, start=load_start, end=end)
+    print(f"  Loaded {len(df_1m):,} bars\n")
+
+    trade_start = pd.Timestamp(start, tz="UTC") if start else None
+    results = optimize_threshold(
+        df_1m=df_1m,
+        ticker=ticker,
+        entry_tf=entry_tf,
+        thresholds=threshold_list,
+        starting_balance=balance,
+        trade_start=trade_start,
+    )
+
+    # Print summary
+    print(f"\n{'='*60}")
+    print(f"  OPTIMIZATION RESULTS")
+    print(f"{'='*60}")
+    print(f"\n  --- Train Results ---")
+    print(f"  {'Threshold':>10} {'Trades':>7} {'WR%':>6} {'PF':>6} {'P&L':>12} {'MaxDD':>7}")
+    for r in results["train_results"]:
+        pf_str = f"{r['profit_factor']:.2f}" if r["profit_factor"] != float("inf") else "inf"
+        print(f"  {r['threshold']:>10} {r['trades']:>7} {r['win_rate']:>5.1f}% {pf_str:>6} ${r['pnl']:>10,.0f} {r['max_drawdown']:>6.1f}%")
+
+    print(f"\n  Best threshold: {results['best_threshold']}")
+
+    test = results["test_result"]
+    pf_str = f"{test['profit_factor']:.2f}" if test["profit_factor"] != float("inf") else "inf"
+    print(f"\n  --- Test Results (threshold={test['threshold']}) ---")
+    print(f"  Trades: {test['trades']}, WR: {test['win_rate']}%, PF: {pf_str}")
+    print(f"  P&L: ${test['pnl']:,.0f}, Max Drawdown: {test['max_drawdown']}%")
+
+
+def cmd_download_history(
+    symbol: str = "ES",
+    days: int = 90,
+    save: str | None = None,
+):
+    """Download historical 1m OHLCV data from IBKR."""
+    import logging
+    from broker.ibkr import IBKRBroker
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    print(f"\n  Downloading {days} days of 1m data for {symbol} from IBKR...")
+    print(f"  This will make ~{days} API calls with 2s pacing (~{days * 2 // 60} min)\n")
+
+    broker = IBKRBroker()
+    try:
+        broker.connect()
+        df = broker.download_historical(
+            symbol=symbol,
+            duration_days=days,
+            save_path=save,
+        )
+        print(f"\n  Done! {len(df):,} bars downloaded")
+        print(f"  Range: {df['timestamp'].min()} to {df['timestamp'].max()}")
+    finally:
+        broker.disconnect()
+
+
 def main():
     parser = argparse.ArgumentParser(description="ICT Paper Trading Simulator")
     sub = parser.add_subparsers(dest="command")
@@ -448,6 +558,20 @@ def main():
     p_journal = sub.add_parser("journal", help="Show recent journal entries")
     p_journal.add_argument("--limit", type=int, default=10, help="Number of entries")
 
+    p_opt = sub.add_parser("optimize", help="Walk-forward optimize confluence threshold")
+    p_opt.add_argument("data", help="Path to OHLCV CSV file")
+    p_opt.add_argument("--ticker", default="ES", help="Ticker symbol (default: ES)")
+    p_opt.add_argument("--entry-tf", default="15min", help="Entry timeframe (default: 15min)")
+    p_opt.add_argument("--thresholds", default="30,40,50,60,70,80", help="Comma-separated thresholds to test")
+    p_opt.add_argument("--balance", type=float, help="Starting balance")
+    p_opt.add_argument("--start", help="Start date (YYYY-MM-DD)")
+    p_opt.add_argument("--end", help="End date (YYYY-MM-DD)")
+
+    p_dl = sub.add_parser("download-history", help="Download historical 1m data from IBKR")
+    p_dl.add_argument("--symbol", default="ES", help="Futures symbol (default: ES)")
+    p_dl.add_argument("--days", type=int, default=90, help="Number of days (default: 90)")
+    p_dl.add_argument("--save", help="Path to save CSV (auto-generated if omitted)")
+
     p_bt = sub.add_parser("backtest", help="Run backtest on historical data")
     p_bt.add_argument("data", help="Path to OHLCV CSV file")
     p_bt.add_argument("--ticker", default="ES", help="Ticker symbol (default: ES). Use BTC-USD for crypto.")
@@ -457,6 +581,9 @@ def main():
     p_bt.add_argument("--end", help="End date (YYYY-MM-DD)")
     p_bt.add_argument("--entry-tf", default="15min", help="Entry timeframe: 1min, 5min, 15min (default: 15min)")
     p_bt.add_argument("--step", type=int, default=None, help="Analyze every Nth entry bar (auto-calculated if omitted)")
+    p_bt.add_argument("--strategy", default="default",
+                       choices=["default", "ict_2022", "silver_bullet"],
+                       help="Trading strategy (default: confluence scoring)")
     p_bt.add_argument("--save", help="Path to save results JSON")
     p_bt.add_argument("--trades", type=int, default=20, help="Number of recent trades to show")
 
@@ -474,6 +601,22 @@ def main():
         cmd_stats()
     elif args.command == "journal":
         cmd_journal(args.limit)
+    elif args.command == "optimize":
+        cmd_optimize(
+            data_path=args.data,
+            ticker=args.ticker,
+            entry_tf=args.entry_tf,
+            thresholds=args.thresholds,
+            balance=args.balance,
+            start=args.start,
+            end=args.end,
+        )
+    elif args.command == "download-history":
+        cmd_download_history(
+            symbol=args.symbol,
+            days=args.days,
+            save=args.save,
+        )
     elif args.command == "backtest":
         cmd_backtest(
             data_path=args.data,
@@ -486,6 +629,7 @@ def main():
             step=args.step,
             save_path=args.save,
             show_trades=args.trades,
+            strategy=args.strategy,
         )
     else:
         parser.print_help()

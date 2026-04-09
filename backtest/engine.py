@@ -14,6 +14,7 @@ import pandas as pd
 from zoneinfo import ZoneInfo
 
 from backtest.rules import decide_trade
+from backtest.strategies import get_strategy
 from config import BACKTEST_SMC_SWING_LENGTH, MIN_CONFLUENCE_SCORE, STARTING_BALANCE
 from data.historical import build_multi_timeframe, get_windowed_data
 from ict.confluence import analyze_multi_timeframe
@@ -64,6 +65,8 @@ def run_backtest(
     step_bars: int | None = None,
     warmup_bars: int | None = None,
     progress_every: int = 500,
+    strategy: str = "default",
+    trade_start: pd.Timestamp | None = None,
 ) -> BacktestResult:
     """Run a walk-forward backtest on historical 1-minute data.
 
@@ -76,6 +79,9 @@ def run_backtest(
         step_bars: Process every Nth entry bar (auto-calculated if None)
         warmup_bars: Minimum entry bars before starting (auto-calculated if None)
         progress_every: Print progress every N bars
+        strategy: Strategy name ("default", "ict_2022", "silver_bullet")
+        trade_start: If set, don't open new trades before this timestamp.
+                     Data before this is used for HTF warmup only.
 
     Returns:
         BacktestResult with all trades, equity curve, and stats
@@ -96,6 +102,7 @@ def run_backtest(
         return _run_backtest_inner(
             df_1m, starting_balance, min_score, ticker,
             entry_tf, step_bars, warmup_bars, progress_every, t0,
+            strategy, trade_start,
         )
     finally:
         set_swing_length_override(None)
@@ -104,6 +111,7 @@ def run_backtest(
 def _run_backtest_inner(
     df_1m, starting_balance, min_score, ticker,
     entry_tf, step_bars, warmup_bars, progress_every, t0,
+    strategy="default", trade_start=None,
 ) -> BacktestResult:
     """Inner backtest loop, separated so run_backtest can wrap in try/finally."""
     # Build all timeframes from 1m data
@@ -151,16 +159,27 @@ def _run_backtest_inner(
             pnl = fill["pnl_dollars"]
             account.update_balance(pnl)
             fill["timestamp"] = str(current_time)
-            # Find the original trade in results and update it
+
+            is_partial = fill.get("partial", False)
+
             for t in result.trades:
                 if t["id"] == fill["position_id"]:
-                    t["exit_price"] = fill["exit_price"]
-                    t["exit_reason"] = fill["exit_reason"]
-                    t["pnl_dollars"] = fill["pnl_dollars"]
-                    t["pnl_pct"] = fill["pnl_pct"]
-                    t["rr_achieved"] = fill["rr_achieved"]
-                    t["exit_time"] = str(current_time)
-                    t["status"] = "CLOSED"
+                    if is_partial:
+                        # Partial fill — accumulate P&L, don't close the trade
+                        if "partial_fills" not in t:
+                            t["partial_fills"] = []
+                        t["partial_fills"].append(fill)
+                        existing_pnl = t.get("pnl_dollars") or 0
+                        t["pnl_dollars"] = round(existing_pnl + pnl, 2)
+                    else:
+                        # Full close
+                        t["exit_price"] = fill["exit_price"]
+                        t["exit_reason"] = fill["exit_reason"]
+                        t["pnl_dollars"] = round((t.get("pnl_dollars") or 0) + pnl, 2)
+                        t["pnl_pct"] = fill["pnl_pct"]
+                        t["rr_achieved"] = fill["rr_achieved"]
+                        t["exit_time"] = str(current_time)
+                        t["status"] = "CLOSED"
                     break
 
             result.equity_curve.append({
@@ -169,6 +188,30 @@ def _run_backtest_inner(
                 "pnl": round(pnl, 2),
                 "event": fill["exit_reason"],
             })
+
+        # Circuit breaker: force-close ALL positions when drawdown limit hit
+        if account.is_circuit_breaker_hit() and pm.get_open_count() > 0:
+            account.trigger_circuit_breaker()
+            for pos in pm.get_open_positions():
+                fill = pm.close_position_manual(pos.id, bar["close"])
+                if fill:
+                    account.update_balance(fill["pnl_dollars"])
+                    for t in result.trades:
+                        if t["id"] == pos.id:
+                            t["exit_price"] = fill["exit_price"]
+                            t["exit_reason"] = "CIRCUIT_BREAKER"
+                            t["pnl_dollars"] = fill["pnl_dollars"]
+                            t["pnl_pct"] = fill["pnl_pct"]
+                            t["rr_achieved"] = fill["rr_achieved"]
+                            t["exit_time"] = str(current_time)
+                            t["status"] = "CLOSED"
+                            break
+                    result.equity_curve.append({
+                        "timestamp": str(current_time),
+                        "balance": round(account.balance, 2),
+                        "pnl": round(fill["pnl_dollars"], 2),
+                        "event": "CIRCUIT_BREAKER",
+                    })
 
         # Force-close remaining non-crypto positions at session end (day trade only).
         # Runs AFTER SL/TP check so real fills take priority over synthetic close.
@@ -202,6 +245,10 @@ def _run_backtest_inner(
 
         result.bars_processed += 1
 
+        # Skip new trades before trade_start (HTF warmup period)
+        if trade_start is not None and current_time < trade_start:
+            continue
+
         # Get point-in-time windowed data
         windowed = get_windowed_data(all_tf, current_time)
 
@@ -210,31 +257,44 @@ def _run_backtest_inner(
         if any(len(windowed[k]) < min_bars.get(k, 10) for k in windowed):
             continue
 
-        # Run ICT analysis with HTF caching — only recompute a timeframe
-        # when its latest bar changes (daily changes once/day, 4H once/4h, etc.)
-        try:
-            ict_context = analyze_multi_timeframe(
-                windowed, ticker, _cache=_analysis_cache
-            )
-        except Exception:
-            continue
+        # --- Strategy dispatch ---
+        if strategy == "default":
+            # Legacy path: confluence scoring + rule-based decision
+            try:
+                ict_context = analyze_multi_timeframe(
+                    windowed, ticker, _cache=_analysis_cache
+                )
+            except Exception:
+                continue
 
-        score = ict_context.get("confluence_score", 0)
+            score = ict_context.get("confluence_score", 0)
 
-        # Check confluence threshold
-        if score < min_score:
-            result.low_confluence_skips += 1
-            continue
+            if score < min_score:
+                result.low_confluence_skips += 1
+                continue
 
-        # Rule-based decision
-        decision = decide_trade(ict_context, min_score)
+            decision = decide_trade(ict_context, min_score)
 
-        if decision["decision"] == "NO_TRADE":
-            result.no_trade_decisions += 1
-            continue
+            if decision["decision"] == "NO_TRADE":
+                result.no_trade_decisions += 1
+                continue
+        else:
+            # New strategy path: strategies call smc_adapter directly
+            strat = get_strategy(strategy)
+            try:
+                decision = strat.evaluate(
+                    windowed, ticker, current_time, _analysis_cache
+                )
+            except Exception:
+                continue
+
+            if decision is None:
+                result.no_trade_decisions += 1
+                continue
+            score = decision.get("confluence_score", 0)
 
         # Validate trade
-        valid, reason = validate_trade(decision, account, pm.get_open_count())
+        valid, reason = validate_trade(decision, account, pm.get_open_count(), ticker=ticker)
         if not valid:
             continue
 
