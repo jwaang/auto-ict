@@ -217,11 +217,12 @@ class LiveTrader:
         log.info(f"  HTF bias: {htf_bias} | Confluence: {score}/100")
 
         # Pre-flight checks
+        from config import ENFORCE_KILL_ZONES
         from ict.killzones import is_in_dead_zone, is_in_killzone, is_crypto
         entry_data = ict_context.get("analyses", {}).get("entry", {})
         current_ts_str = entry_data.get("current_timestamp")
 
-        if not is_crypto(self.ticker) and current_ts_str:
+        if ENFORCE_KILL_ZONES and not is_crypto(self.ticker) and current_ts_str:
             import pandas as pd
             ts = pd.Timestamp(current_ts_str)
 

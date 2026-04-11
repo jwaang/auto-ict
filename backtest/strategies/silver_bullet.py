@@ -100,7 +100,7 @@ class SilverBulletStrategy:
             return None
 
         # --- HTF bias ---
-        htf_bias = get_htf_bias(bias_det, swing_det)
+        htf_bias = get_htf_bias(bias_det, swing_det, entry_det)
         if htf_bias == "neutral":
             return None
 

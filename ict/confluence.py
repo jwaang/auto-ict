@@ -298,6 +298,99 @@ def _find_ote_from_swings(swings: list, bias: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# ICT Daily Bias Determination
+# ---------------------------------------------------------------------------
+
+def determine_ict_bias(
+    bias_analysis: dict,
+    swing_analysis: dict,
+    entry_analysis: dict,
+) -> str:
+    """Determine daily bias using the full ICT methodology.
+
+    Four factors scored (each votes bullish or bearish):
+    1. Structure direction — daily BOS/CHoCH (fallback to 4H)
+    2. Liquidity draw target — which side has unbroken external liquidity?
+    3. Premium/discount — price position in the dealing range
+    4. Liquidity raid status — has one side already been swept?
+
+    Requires 3+ factors aligned for a directional bias.
+    If 2-2 tie, structure direction breaks the tie.
+    If <2 either way, returns 'neutral'.
+    """
+    bullish_votes = 0
+    bearish_votes = 0
+
+    # --- Factor 1: Structure direction (existing BOS/CHoCH bias) ---
+    structure_bias = bias_analysis.get("bias", "neutral")
+    if structure_bias == "neutral":
+        structure_bias = swing_analysis.get("bias", "neutral")
+    if structure_bias == "bullish":
+        bullish_votes += 1
+    elif structure_bias == "bearish":
+        bearish_votes += 1
+
+    # --- Factor 2: Liquidity draw target (PDH/PDL broken status) ---
+    pdhl = entry_analysis.get("previous_high_low", {})
+    if pdhl:
+        pdh_broken = pdhl.get("pdh_broken", False)
+        pdl_broken = pdhl.get("pdl_broken", False)
+        pdh = pdhl.get("pdh")
+        pdl = pdhl.get("pdl")
+        current_price = entry_analysis.get("current_price", 0)
+
+        if pdh and not pdh_broken and pdl_broken:
+            # Buy-side unbroken, sell-side taken → draw is above → bullish
+            bullish_votes += 1
+        elif pdl and not pdl_broken and pdh_broken:
+            # Sell-side unbroken, buy-side taken → draw is below → bearish
+            bearish_votes += 1
+        elif pdh and pdl and not pdh_broken and not pdl_broken and current_price:
+            # Both unbroken → nearer target is the likely draw
+            dist_high = abs(current_price - pdh) if pdh else float("inf")
+            dist_low = abs(current_price - pdl) if pdl else float("inf")
+            if dist_high < dist_low:
+                bullish_votes += 1
+            elif dist_low < dist_high:
+                bearish_votes += 1
+
+    # --- Factor 3: Premium/discount context ---
+    # Use daily dealing range first, fallback to 4H
+    pd_zone = bias_analysis.get("premium_discount", {})
+    if not pd_zone or pd_zone.get("zone") == "neutral":
+        pd_zone = swing_analysis.get("premium_discount", {})
+    zone = pd_zone.get("zone", "neutral")
+    if zone == "discount":
+        bullish_votes += 1  # In discount → looking to buy
+    elif zone == "premium":
+        bearish_votes += 1  # In premium → looking to sell
+
+    # --- Factor 4: Liquidity raid status ---
+    liquidity_zones = entry_analysis.get("liquidity_zones", [])
+    swept_sell = any(z.get("swept") for z in liquidity_zones if z.get("type") == "sell_side")
+    swept_buy = any(z.get("swept") for z in liquidity_zones if z.get("type") == "buy_side")
+
+    if swept_sell and not swept_buy:
+        # Sell-side raided (lows taken) → manipulation done → distribution up
+        bullish_votes += 1
+    elif swept_buy and not swept_sell:
+        # Buy-side raided (highs taken) → manipulation done → distribution down
+        bearish_votes += 1
+
+    # --- Final determination ---
+    # Requires 3+ factors aligned for directional bias
+    if bullish_votes >= 3:
+        return "bullish"
+    if bearish_votes >= 3:
+        return "bearish"
+    # 2-2 tie → structure direction breaks it
+    if bullish_votes == 2 and bearish_votes == 2:
+        return structure_bias
+    # Anything else (2-1, 2-0, 1-0, etc.) → insufficient alignment
+    return "neutral"
+
+
+# ---------------------------------------------------------------------------
 # Multi-timeframe analysis
 # ---------------------------------------------------------------------------
 
@@ -340,8 +433,12 @@ def analyze_multi_timeframe(
         else:
             analyses[label] = analyze_timeframe(df, label)
 
-    # HTF bias comes from the bias timeframe (daily)
-    htf_bias = analyses.get("bias", {}).get("bias", "neutral")
+    # HTF bias from full ICT methodology (structure + liquidity + premium/discount + raids)
+    htf_bias = determine_ict_bias(
+        analyses.get("bias", {}),
+        analyses.get("swing", {}),
+        analyses.get("entry", {}),
+    )
 
     # Find confluences between setup and entry timeframes
     setup = analyses.get("setup", {})

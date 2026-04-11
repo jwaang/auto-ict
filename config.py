@@ -57,6 +57,8 @@ OTE_FIB_LOW = 0.618
 OTE_FIB_HIGH = 0.79
 OTE_FIB_SWEET_SPOT = 0.705
 
+ENFORCE_KILL_ZONES = False  # Kill zone / dead zone filtering for all paths (backtest + live)
+
 # Kill Zone times (Eastern Time, 24h format)
 KILL_ZONES_ET = {
     "london": (2, 5),      # 2:00 - 5:00 AM ET
@@ -166,7 +168,7 @@ SL_ATR_MULTIPLIER = {
 }
 
 # Trade management
-TRADE_MANAGEMENT_ENABLED = False  # Set True to enable partial TP + trailing SL
+TRADE_MANAGEMENT_ENABLED = False  # Set True to enable partial TP + trailing SL (lowers P&L but reduces DD)
 BE_MOVE_THRESHOLD_R = 1.0      # Move SL to breakeven after this many R of profit
 PARTIAL_CLOSE_PCT = 0.50       # Close 50% of position at 1R
 

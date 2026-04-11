@@ -109,11 +109,20 @@ def run_smc_detections(
 # HTF Bias
 # ---------------------------------------------------------------------------
 
-def get_htf_bias(bias_det: dict, swing_det: dict) -> str:
-    """Get HTF directional bias from daily, falling back to 4H swing.
+def get_htf_bias(bias_det: dict, swing_det: dict, entry_det: dict | None = None) -> str:
+    """Get HTF directional bias using the full ICT methodology.
+
+    When entry_det is provided, uses the 4-factor ICT bias determination
+    (structure + liquidity draw + premium/discount + raid status).
+    Otherwise falls back to simple structure-based bias.
 
     Returns 'bullish', 'bearish', or 'neutral'.
     """
+    if entry_det is not None:
+        from ict.confluence import determine_ict_bias
+        return determine_ict_bias(bias_det, swing_det, entry_det)
+
+    # Simple fallback when entry detections aren't available
     bias = bias_det.get("bias", "neutral")
     if bias != "neutral":
         return bias

@@ -83,12 +83,13 @@ def cmd_analyze(ticker: str, balance: float | None = None):
     print(f"\n      Confluence Score: {score}/100 (minimum: {MIN_CONFLUENCE_SCORE})")
 
     # Step 3: Pre-flight checks
+    from config import ENFORCE_KILL_ZONES
     from ict.killzones import is_in_dead_zone, is_in_killzone, is_crypto
     entry_data = ict_context.get("analyses", {}).get("entry", {})
     current_ts_str = entry_data.get("current_timestamp")
 
-    # Futures use kill zone / dead zone rules (same as non-crypto)
-    if not is_crypto(ticker) and current_ts_str:
+    # Kill zone / dead zone checks (respects global ENFORCE_KILL_ZONES flag)
+    if ENFORCE_KILL_ZONES and not is_crypto(ticker) and current_ts_str:
         import pandas as pd
         ts = pd.Timestamp(current_ts_str)
 

@@ -47,6 +47,8 @@ def detect_displacements(
             # Count consecutive displacement candles in same direction
             consecutive = 1
             for j in range(i - 1, max(0, i - 5), -1):
+                if atr.iloc[j] == 0 or np.isnan(atr.iloc[j]):
+                    break
                 if body.iloc[j] / atr.iloc[j] >= atr_mult:
                     j_dir = "bullish" if closes[j] > opens[j] else "bearish"
                     if j_dir == direction:

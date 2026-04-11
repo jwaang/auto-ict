@@ -5,7 +5,7 @@ are reproducible and fast. The rules encode the same ICT methodology
 that the AI system prompt enforces.
 """
 
-from config import MIN_CONFLUENCE_SCORE, MIN_RR_RATIO, SL_ATR_MULTIPLIER, is_futures
+from config import ENFORCE_KILL_ZONES, MIN_CONFLUENCE_SCORE, MIN_RR_RATIO, SL_ATR_MULTIPLIER, is_futures
 from ict.killzones import is_in_dead_zone, is_in_killzone, is_crypto
 
 
@@ -56,7 +56,7 @@ def decide_trade(ict_context: dict, min_score: int = MIN_CONFLUENCE_SCORE) -> di
     # Rule 2: Kill zone gate (non-crypto only)
     # ICT methodology: only trade during kill zones, never during dead zones
     ticker = ict_context.get("ticker", "")
-    if not is_crypto(ticker):
+    if ENFORCE_KILL_ZONES and not is_crypto(ticker):
         current_ts = entry_data.get("current_timestamp")
         if current_ts:
             from datetime import datetime
@@ -169,12 +169,19 @@ def _find_trade_levels(
             setup_type = "Order Block"
             concepts = ["OB"]
 
-    # Strategy 3: FVG entry
+    # Strategy 3: FVG entry — only when price is in the OTE zone (61.8-79% retracement)
+    # Standalone FVG without OTE confirmation underperforms on futures.
+    # Pairing with OTE creates the "OTE + FVG" setup from ICT methodology.
     if entry_price is None and aligned_fvgs:
-        entry_price, stop_loss = _find_fvg_entry(direction, aligned_fvgs, current_price, atr, sl_mult)
-        if entry_price:
-            setup_type = "Fair Value Gap"
-            concepts = ["FVG"]
+        ote = entry_data.get("ote", {})
+        retracement = entry_data.get("retracement", {})
+        in_ote = ote.get("valid") and retracement.get("in_ote", False)
+
+        if in_ote or not is_futures(ticker):
+            entry_price, stop_loss = _find_fvg_entry(direction, aligned_fvgs, current_price, atr, sl_mult)
+            if entry_price:
+                setup_type = "FVG+OTE" if in_ote else "Fair Value Gap"
+                concepts = ["FVG", "OTE"] if in_ote else ["FVG"]
 
     if entry_price is None:
         return None, None, None, "", []
