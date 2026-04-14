@@ -8,6 +8,14 @@ ICT Paper Trading Simulator — applies Inner Circle Trader (ICT) methodology to
 
 **Paper trading only — uses IBKR paper account. No real money at risk.**
 
+## Setup
+
+```bash
+py -m pip install -r requirements.txt
+```
+
+Target Python 3.12+. Use `snake_case` for functions/variables/modules, `PascalCase` for classes, `UPPER_CASE` for constants in `config.py`. Commit messages: imperative mood with prefix (e.g. `feat: add conditional entry validation`, `fix: handle empty candles`).
+
 ## Commands
 
 ```bash
@@ -39,13 +47,14 @@ py main.py backtest data.csv --strategy ict_2022                # ICT 2022 Model
 py main.py backtest data.csv --strategy silver_bullet            # Silver Bullet strategy
 py main.py backtest data.csv --strategy default                  # confluence scoring (default)
 py main.py backtest data.csv --step 8 --save logs/results.json
+py main.py backtest data.csv --regime-test --entry-tf 5min  # quick 4-week regime validation
 
 # Walk-forward threshold optimization
 py main.py optimize data.csv --ticker ES --entry-tf 15min
 py main.py optimize data.csv --thresholds 30,40,50,60,70,80 --start 2026-01-01
 
 # Run tests
-py -m pytest tests/ -v              # all 55 tests
+py -m pytest tests/ -v              # all tests
 py -m pytest tests/test_no_lookahead.py -v   # causality tests only
 py -m pytest tests/test_trading.py -v        # trading module tests only
 py -m pytest tests/ -k "test_fvg"            # run tests matching pattern
@@ -100,9 +109,10 @@ Backtest (strategies): Historical CSV (data/historical.py)
 | `trading/` | `risk.py`, `positions.py`, `account.py` | Risk validation (futures-aware), position simulation with trade management, account tracking with circuit breaker |
 | `backtest/` | `engine.py`, `rules.py`, `report.py` | Walk-forward backtesting engine with rule-based decisions and analytics |
 | `backtest/strategies/` | `ict_2022.py`, `silver_bullet.py`, `common.py` | ICT-specific strategies using temporal sequence detection (sweep → MSS → FVG) |
-| `backtest/` | `optimize.py` | Walk-forward confluence threshold optimization (train/test split) |
+| `backtest/` | `optimize.py` | Walk-forward confluence threshold optimization (train/test split, parallel) |
+| `backtest/` | `regimes.py` | Regime-based test presets (4 representative weeks per asset for quick validation) |
 | `journal/` | `logger.py` | JSON trade log with ICT context snapshots and IBKR order IDs |
-| `tests/` | `test_no_lookahead.py`, `test_trading.py`, `test_data_historical.py` | 55 regression tests (causality, trading, data) |
+| `tests/` | `test_no_lookahead.py`, `test_trading.py`, `test_smc_patched.py`, etc. | 156 regression tests (causality, trading, SMC detectors, data) |
 
 ### Vendored SMC Library (`ict/smc_patched.py`)
 
@@ -176,11 +186,11 @@ Minimum score to trade: 60. Weights defined in `config.CONFLUENCE_WEIGHTS`.
 
 The backtest engine uses deterministic rules (`backtest/rules.py`). The live path (`main.py analyze`) also uses these same rules when `USE_AI_ANALYSIS = False` (current default). Set `True` in `config.py` to re-enable Claude AI decisions.
 
-1. **HTF bias required** — daily must be bullish or bearish (falls back to 4H swing bias if daily is neutral)
-2. **Kill zone gate** (non-crypto only) — entries only during London (2-5 AM ET), NY (7-11 AM ET), or Asian (7-10 PM ET)
-3. **Dead zone block** — no entries during NY lunch (11 AM - 1 PM ET)
+1. **4-factor HTF bias required** — `determine_ict_bias()` scores structure direction + liquidity draw + premium/discount + raid status. Requires 3+ of 4 factors aligned; 2-2 tie uses structure as tiebreaker; anything else = neutral (no trade).
+2. **Kill zone gate** (configurable via `ENFORCE_KILL_ZONES`, default OFF) — when enabled, entries only during London (2-5 AM ET), NY (7-11 AM ET), or Asian (7-10 PM ET). Backtesting showed higher P&L with kill zones OFF.
+3. **Dead zone block** (only when kill zones enabled) — no entries during NY lunch (11 AM - 1 PM ET)
 4. **Confluence >= 60**
-5. **Actionable ICT levels** — needs FVG+OB overlap or standalone FVG aligned with bias (standalone OB filtered out for futures)
+5. **Actionable ICT levels** — needs FVG+OB overlap or FVG+OTE (standalone FVG requires OTE zone for futures; standalone OB filtered out for futures)
 6. **Minimum 2:1 R:R**
 7. **Session-end close** (non-crypto) — all positions force-closed at 4 PM ET (day trades only, no overnight holds). SL/TP fills are checked BEFORE session-end so real fills take priority over synthetic close.
 
@@ -215,7 +225,9 @@ When `TRADE_MANAGEMENT_ENABLED = True` in config (default: False):
 - `ict/smc_patched.py` — Vendored + patched SMC library (no look-ahead bias). Do not modify.
 - `docs/ICT_Trading_Strategies_Combined_Research.md` — ICT methodology reference (2022 Model, Silver Bullet, Power of 3, etc.)
 - `logs/trades.json` — Trade journal (append-only)
+- `logs/backtest_trades.csv` — Trade log CSV with reasoning, concepts, bias, and outcome (auto-generated by backtests for manual review)
 - `BACKTESTING-FINDINGS.md` — Documented backtest results and analysis across ES and BTC
+- `docs/BACKTEST-RESULTS-LOG.md` — Comprehensive log of all backtest experiments with results and configuration history
 
 ## Data Sources
 

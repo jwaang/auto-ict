@@ -48,11 +48,11 @@ class BacktestResult:
 
 # Default warmup and step values per entry timeframe
 _ENTRY_TF_DEFAULTS = {
-    "1min":  {"warmup": 1000, "step": 15},   # analyze every 15 min
-    "5min":  {"warmup": 500,  "step": 3},    # analyze every 15 min
-    "15min": {"warmup": 200,  "step": 4},    # analyze every hour
-    "30min": {"warmup": 100,  "step": 2},    # analyze every hour
-    "1h":    {"warmup": 50,   "step": 1},    # analyze every hour
+    "1min":  {"warmup": 1000, "step": 1},    # analyze every bar
+    "5min":  {"warmup": 500,  "step": 1},    # analyze every bar
+    "15min": {"warmup": 200,  "step": 1},    # analyze every bar
+    "30min": {"warmup": 100,  "step": 1},    # analyze every bar
+    "1h":    {"warmup": 50,   "step": 1},    # analyze every bar
 }
 
 
@@ -67,6 +67,7 @@ def run_backtest(
     progress_every: int = 500,
     strategy: str = "default",
     trade_start: pd.Timestamp | None = None,
+    trade_end: pd.Timestamp | None = None,
 ) -> BacktestResult:
     """Run a walk-forward backtest on historical 1-minute data.
 
@@ -82,6 +83,8 @@ def run_backtest(
         strategy: Strategy name ("default", "ict_2022", "silver_bullet")
         trade_start: If set, don't open new trades before this timestamp.
                      Data before this is used for HTF warmup only.
+        trade_end: If set, stop opening new trades after this timestamp.
+                   Open positions are allowed to close naturally (SL/TP/session-end).
 
     Returns:
         BacktestResult with all trades, equity curve, and stats
@@ -102,7 +105,7 @@ def run_backtest(
         return _run_backtest_inner(
             df_1m, starting_balance, min_score, ticker,
             entry_tf, step_bars, warmup_bars, progress_every, t0,
-            strategy, trade_start,
+            strategy, trade_start, trade_end,
         )
     finally:
         set_swing_length_override(None)
@@ -111,7 +114,7 @@ def run_backtest(
 def _run_backtest_inner(
     df_1m, starting_balance, min_score, ticker,
     entry_tf, step_bars, warmup_bars, progress_every, t0,
-    strategy="default", trade_start=None,
+    strategy="default", trade_start=None, trade_end=None,
 ) -> BacktestResult:
     """Inner backtest loop, separated so run_backtest can wrap in try/finally."""
     # Build all timeframes from 1m data
@@ -249,6 +252,12 @@ def _run_backtest_inner(
         if trade_start is not None and current_time < trade_start:
             continue
 
+        # Stop new trades after trade_end; exit loop when positions closed
+        if trade_end is not None and current_time > trade_end:
+            if pm.get_open_count() == 0:
+                break
+            continue
+
         # Get point-in-time windowed data
         windowed = get_windowed_data(all_tf, current_time)
 
@@ -323,6 +332,10 @@ def _run_backtest_inner(
             "setup_type": decision.get("setup_type", ""),
             "confluence_score": score,
             "concepts": decision.get("ict_concepts_used", []),
+            "reasoning": decision.get("reasoning", ""),
+            "htf_bias": decision.get("htf_bias", ""),
+            "risk_reward_ratio": decision.get("risk_reward_ratio", 0),
+            "invalidation": decision.get("invalidation", ""),
         })
 
         # Progress reporting
@@ -364,4 +377,66 @@ def _run_backtest_inner(
     result.final_balance = round(account.balance, 2)
     result.duration_seconds = round(time.time() - t0, 1)
 
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Regime-based backtesting
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RegimeTestResult:
+    """Results from a regime-based backtest across multiple market conditions."""
+    regime_results: dict = field(default_factory=dict)  # label -> BacktestResult
+    duration_seconds: float = 0
+
+
+def run_regime_backtest(
+    df_1m: pd.DataFrame,
+    regime_weeks: list,
+    starting_balance: float = STARTING_BALANCE,
+    min_score: int = MIN_CONFLUENCE_SCORE,
+    ticker: str = "ES",
+    entry_tf: str = "15min",
+    step_bars: int | None = None,
+    strategy: str = "default",
+) -> RegimeTestResult:
+    """Run backtests on representative regime weeks.
+
+    Each week gets its own Account and PositionManager (isolated state).
+    The full DataFrame is passed to each run — trade_start/trade_end
+    constrain which bars are traded, while earlier data provides HTF warmup.
+
+    Args:
+        df_1m: Full 1-minute OHLCV DataFrame
+        regime_weeks: List of RegimeWeek definitions
+        Other args: same as run_backtest()
+
+    Returns:
+        RegimeTestResult with per-regime BacktestResult
+    """
+    t0 = time.time()
+    result = RegimeTestResult()
+
+    for week in regime_weeks:
+        week_start = pd.Timestamp(week.start, tz="UTC")
+        week_end = pd.Timestamp(week.end, tz="UTC") + pd.Timedelta(days=1)  # include Friday
+
+        print(f"\n  --- {week.label}: {week.start} to {week.end} ---")
+        print(f"      {week.description}")
+
+        week_result = run_backtest(
+            df_1m=df_1m,
+            starting_balance=starting_balance,
+            min_score=min_score,
+            ticker=ticker,
+            entry_tf=entry_tf,
+            step_bars=step_bars,
+            strategy=strategy,
+            trade_start=week_start,
+            trade_end=week_end,
+        )
+        result.regime_results[week.label] = week_result
+
+    result.duration_seconds = round(time.time() - t0, 1)
     return result

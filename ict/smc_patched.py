@@ -124,16 +124,24 @@ class smc:
 
         # Mitigation: check when price returns into the FVG after it forms.
         # Since we shifted forward by 1, start checking from i + 1 (not i + 2).
-        mitigated_index = np.zeros(len(ohlc), dtype=np.int32)
-        for i in np.where(~np.isnan(fvg))[0]:
-            mask = np.zeros(len(ohlc), dtype=np.bool_)
+        ohlc_low_arr = ohlc["low"].values
+        ohlc_high_arr = ohlc["high"].values
+        n_bars = len(ohlc)
+        mitigated_index = np.zeros(n_bars, dtype=np.int32)
+        fvg_indices = np.where(~np.isnan(fvg))[0]
+        for i in fvg_indices:
+            if i + 1 >= n_bars:
+                continue
             if fvg[i] == 1:
-                mask = ohlc["low"][i + 1 :] <= top[i]
-            elif fvg[i] == -1:
-                mask = ohlc["high"][i + 1 :] >= bottom[i]
-            if np.any(mask):
-                j = np.argmax(mask) + i + 1
-                mitigated_index[i] = j
+                # Bullish FVG mitigated when low <= top
+                remaining = ohlc_low_arr[i + 1:]
+                hits = np.where(remaining <= top[i])[0]
+            else:
+                # Bearish FVG mitigated when high >= bottom
+                remaining = ohlc_high_arr[i + 1:]
+                hits = np.where(remaining >= bottom[i])[0]
+            if len(hits) > 0:
+                mitigated_index[i] = hits[0] + i + 1
 
         mitigated_index = np.where(np.isnan(fvg), np.nan, mitigated_index)
 
@@ -177,24 +185,38 @@ class smc:
         # is emitted at the confirmation bar (i), not the candidate bar.
         swing_level = np.full(n, np.nan)
 
+        # Precompute rolling max/min for lookback windows (vectorized)
+        # rolling_high_max[c] = max of highs[c-lookback : c+1]
+        # rolling_low_min[c] = min of lows[c-lookback : c+1]
+        _high_series = pd.Series(highs)
+        _low_series = pd.Series(lows)
+        rolling_high_max = _high_series.rolling(window=lookback + 1, min_periods=lookback + 1).max().values
+        rolling_low_min = _low_series.rolling(window=lookback + 1, min_periods=lookback + 1).min().values
+
+        # Precompute forward-looking confirmation max/min
+        # For confirmation bar i, we need max of highs[candidate+1 : i+1] where candidate = i - confirm_bars
+        # That's max of highs[i - confirm_bars + 1 : i + 1] = rolling max over confirm_bars ending at i
+        confirm_high_max = _high_series.rolling(window=confirm_bars, min_periods=confirm_bars).max().values
+        confirm_low_min = _low_series.rolling(window=confirm_bars, min_periods=confirm_bars).min().values
+
         for i in range(lookback + confirm_bars, n):
             candidate = i - confirm_bars
-            # Lookback window: [candidate - lookback, candidate] inclusive
-            high_window = highs[candidate - lookback:candidate + 1]
-            low_window = lows[candidate - lookback:candidate + 1]
 
-            # Swing high: candidate is highest in lookback, confirmed by lower highs after
-            if highs[candidate] == high_window.max():
-                if all(highs[candidate + j] < highs[candidate] for j in range(1, confirm_bars + 1)):
+            # Swing high: candidate is highest in lookback (use precomputed rolling max)
+            if highs[candidate] == rolling_high_max[candidate]:
+                # Confirm: max of highs[candidate+1:i+1] < highs[candidate]
+                # confirm_high_max[i] = max of highs[i-confirm_bars+1 : i+1] = max of highs[candidate+1:i+1]
+                if confirm_high_max[i] < highs[candidate]:
                     # Signal emitted at confirmation bar (i), not candidate.
-                    # This ensures downstream code (BOS/CHoCH, OB) cannot use
+                    # This ensures downstream code (BOS/ChoCH, OB) cannot use
                     # this swing before it was actually knowable.
                     swing_highs_lows[i] = 1
                     swing_level[i] = highs[candidate]
 
-            # Swing low: candidate is lowest in lookback, confirmed by higher lows after
-            if lows[candidate] == low_window.min():
-                if all(lows[candidate + j] > lows[candidate] for j in range(1, confirm_bars + 1)):
+            # Swing low: candidate is lowest in lookback (use precomputed rolling min)
+            if lows[candidate] == rolling_low_min[candidate]:
+                # Confirm: min of lows[candidate+1:i+1] > lows[candidate]
+                if confirm_low_min[i] > lows[candidate]:
                     swing_highs_lows[i] = -1
                     swing_level[i] = lows[candidate]
 
@@ -271,115 +293,74 @@ class smc:
         level_order = []
         highs_lows_order = []
 
+        shl_hl_arr = swing_highs_lows["HighLow"].values
+        shl_lv_arr = swing_highs_lows["Level"].values
+        n_shl = len(shl_hl_arr)
+
         bos = np.zeros(len(ohlc), dtype=np.int32)
         choch = np.zeros(len(ohlc), dtype=np.int32)
         level = np.zeros(len(ohlc), dtype=np.float32)
 
         last_positions = []
 
-        for i in range(len(swing_highs_lows["HighLow"])):
-            if not np.isnan(swing_highs_lows["HighLow"][i]):
-                level_order.append(swing_highs_lows["Level"][i])
-                highs_lows_order.append(swing_highs_lows["HighLow"][i])
+        for i in range(n_shl):
+            if not np.isnan(shl_hl_arr[i]):
+                level_order.append(shl_lv_arr[i])
+                highs_lows_order.append(shl_hl_arr[i])
                 if len(level_order) >= 4:
                     # Emit BOS/CHoCH at bar i (where the 4th swing makes
                     # the pattern knowable), NOT at last_positions[-2].
-                    # The original code backdated signals to an earlier bar,
-                    # which is look-ahead bias.
+                    h0, h1, h2, h3 = highs_lows_order[-4], highs_lows_order[-3], highs_lows_order[-2], highs_lows_order[-1]
+                    l0, l1, l2, l3 = level_order[-4], level_order[-3], level_order[-2], level_order[-1]
 
-                    # bullish bos
-                    bos[i] = (
-                        1
-                        if (
-                            np.all(highs_lows_order[-4:] == [-1, 1, -1, 1])
-                            and np.all(
-                                level_order[-4]
-                                < level_order[-2]
-                                < level_order[-3]
-                                < level_order[-1]
-                            )
-                        )
-                        else 0
-                    )
-                    level[i] = (
-                        level_order[-3] if bos[i] != 0 else 0
-                    )
+                    # bullish bos: pattern [-1, 1, -1, 1] with l0 < l2 < l1 < l3
+                    if h0 == -1 and h1 == 1 and h2 == -1 and h3 == 1 and l0 < l2 < l1 < l3:
+                        bos[i] = 1
+                        level[i] = l1
 
-                    # bearish bos
-                    bos[i] = (
-                        -1
-                        if (
-                            np.all(highs_lows_order[-4:] == [1, -1, 1, -1])
-                            and np.all(
-                                level_order[-4]
-                                > level_order[-2]
-                                > level_order[-3]
-                                > level_order[-1]
-                            )
-                        )
-                        else bos[i]
-                    )
-                    level[i] = (
-                        level_order[-3] if bos[i] != 0 else 0
-                    )
+                    # bearish bos: pattern [1, -1, 1, -1] with l0 > l2 > l1 > l3
+                    if h0 == 1 and h1 == -1 and h2 == 1 and h3 == -1 and l0 > l2 > l1 > l3:
+                        bos[i] = -1
+                        level[i] = l1
 
-                    # bullish choch
-                    choch[i] = (
-                        1
-                        if (
-                            np.all(highs_lows_order[-4:] == [-1, 1, -1, 1])
-                            and np.all(
-                                level_order[-1]
-                                > level_order[-3]
-                                > level_order[-4]
-                                > level_order[-2]
-                            )
-                        )
-                        else 0
-                    )
-                    level[i] = (
-                        level_order[-3]
-                        if choch[i] != 0
-                        else level[i]
-                    )
+                    # bullish choch: pattern [-1, 1, -1, 1] with l3 > l1 > l0 > l2
+                    if h0 == -1 and h1 == 1 and h2 == -1 and h3 == 1 and l3 > l1 > l0 > l2:
+                        choch[i] = 1
+                        level[i] = l1
 
-                    # bearish choch
-                    choch[i] = (
-                        -1
-                        if (
-                            np.all(highs_lows_order[-4:] == [1, -1, 1, -1])
-                            and np.all(
-                                level_order[-1]
-                                < level_order[-3]
-                                < level_order[-4]
-                                < level_order[-2]
-                            )
-                        )
-                        else choch[i]
-                    )
-                    level[i] = (
-                        level_order[-3]
-                        if choch[i] != 0
-                        else level[i]
-                    )
+                    # bearish choch: pattern [1, -1, 1, -1] with l3 < l1 < l0 < l2
+                    if h0 == 1 and h1 == -1 and h2 == 1 and h3 == -1 and l3 < l1 < l0 < l2:
+                        choch[i] = -1
+                        level[i] = l1
 
                 last_positions.append(i)
 
-        broken = np.zeros(len(ohlc), dtype=np.int32)
-        for i in np.where(np.logical_or(bos != 0, choch != 0))[0]:
-            mask = np.zeros(len(ohlc), dtype=np.bool_)
+        break_col = ohlc["close" if close_break else "high"].values
+        break_col_low = ohlc["close" if close_break else "low"].values
+        n_ohlc = len(ohlc)
+
+        broken = np.zeros(n_ohlc, dtype=np.int32)
+        signal_indices = np.where(np.logical_or(bos != 0, choch != 0))[0]
+        n_signals = len(signal_indices)
+        for si in range(n_signals):
+            i = signal_indices[si]
             # if the bos is 1 then check if the candles high has gone above the level
             if bos[i] == 1 or choch[i] == 1:
-                mask = ohlc["close" if close_break else "high"][i + 2 :] > level[i]
+                remaining = break_col[i + 2:n_ohlc]
+                hits = np.where(remaining > level[i])[0]
             # if the bos is -1 then check if the candles low has gone below the level
             elif bos[i] == -1 or choch[i] == -1:
-                mask = ohlc["close" if close_break else "low"][i + 2 :] < level[i]
-            if np.any(mask):
-                j = np.argmax(mask) + i + 2
+                remaining = break_col_low[i + 2:n_ohlc]
+                hits = np.where(remaining < level[i])[0]
+            else:
+                continue
+            if len(hits) > 0:
+                j = hits[0] + i + 2
                 broken[i] = j
-                # if there are any unbroken bos or choch that started before this one and ended after this one then remove them
-                for k in np.where(np.logical_or(bos != 0, choch != 0))[0]:
-                    if k < i and broken[k] >= j:
+                # Only scan PRIOR signals (k < i) — use index to limit scan
+                for sk in range(si):
+                    k = signal_indices[sk]
+                    if broken[k] >= j:
                         bos[k] = 0
                         choch[k] = 0
                         level[k] = 0
@@ -453,66 +434,101 @@ class smc:
         swing_high_indices = np.flatnonzero(swing_hl == 1)
         swing_low_indices = np.flatnonzero(swing_hl == -1)
 
-        # List to track active bullish order blocks
+        # Single pass: detect both bullish and bearish OBs together
         active_bullish = []
-        for i in range(ohlc_len):
-            close_index = i
-            # Update existing bullish OB
-            for idx in active_bullish.copy():
-                if breaker[idx]:
-                    if _high[close_index] > top_arr[idx]:
-                        # Reset this OB
-                        ob[idx] = 0
-                        top_arr[idx] = 0.0
-                        bottom_arr[idx] = 0.0
-                        obVolume[idx] = 0.0
-                        lowVolume[idx] = 0.0
-                        highVolume[idx] = 0.0
-                        mitigated_index[idx] = 0
-                        percentage[idx] = 0.0
-                        active_bullish.remove(idx)
-                else:
-                    if ((not close_mitigation and _low[close_index] < bottom_arr[idx])
-                        or (close_mitigation and min(_open[close_index], _close[close_index]) < bottom_arr[idx])):
-                        breaker[idx] = True
-                        mitigated_index[idx] = close_index - 1
+        active_bearish = []
+        # Cache last searchsorted positions to avoid redundant binary searches
+        last_bull_pos = 0
+        last_bear_pos = 0
+        n_swing_hi = len(swing_high_indices)
+        n_swing_lo = len(swing_low_indices)
 
-            # Find last swing high index less than current candle (using binary search)
-            pos = np.searchsorted(swing_high_indices, close_index)
-            last_top_index = swing_high_indices[pos - 1] if pos > 0 else None
+        for i in range(ohlc_len):
+            hi = _high[i]
+            lo = _low[i]
+            cl = _close[i]
+            op = _open[i]
+
+            # --- Update active bullish OBs ---
+            if active_bullish:
+                new_bull = []
+                for idx in active_bullish:
+                    if breaker[idx]:
+                        if hi > top_arr[idx]:
+                            ob[idx] = 0
+                            top_arr[idx] = 0.0
+                            bottom_arr[idx] = 0.0
+                            obVolume[idx] = 0.0
+                            lowVolume[idx] = 0.0
+                            highVolume[idx] = 0.0
+                            mitigated_index[idx] = 0
+                            percentage[idx] = 0.0
+                        else:
+                            new_bull.append(idx)
+                    else:
+                        if ((not close_mitigation and lo < bottom_arr[idx])
+                            or (close_mitigation and min(op, cl) < bottom_arr[idx])):
+                            breaker[idx] = True
+                            mitigated_index[idx] = i - 1
+                        new_bull.append(idx)
+                active_bullish = new_bull
+
+            # --- Update active bearish OBs ---
+            if active_bearish:
+                new_bear = []
+                for idx in active_bearish:
+                    if breaker[idx]:
+                        if lo < bottom_arr[idx]:
+                            ob[idx] = 0
+                            top_arr[idx] = 0.0
+                            bottom_arr[idx] = 0.0
+                            obVolume[idx] = 0.0
+                            lowVolume[idx] = 0.0
+                            highVolume[idx] = 0.0
+                            mitigated_index[idx] = 0
+                            percentage[idx] = 0.0
+                        else:
+                            new_bear.append(idx)
+                    else:
+                        if ((not close_mitigation and hi > top_arr[idx])
+                            or (close_mitigation and max(op, cl) > top_arr[idx])):
+                            breaker[idx] = True
+                            mitigated_index[idx] = i
+                        new_bear.append(idx)
+                active_bearish = new_bear
+
+            # --- Detect new bullish OB (swing high crossed) ---
+            # Advance cached position
+            while last_bull_pos < n_swing_hi and swing_high_indices[last_bull_pos] < i:
+                last_bull_pos += 1
+            last_top_index = swing_high_indices[last_bull_pos - 1] if last_bull_pos > 0 else None
 
             if last_top_index is not None:
-                # Use Level (the actual swing price) instead of _high at the signal index,
-                # since signals are now at the confirmation bar, not the price bar.
                 swing_high_price = swing_lv[last_top_index]
-                if _close[close_index] > swing_high_price and not crossed[last_top_index]:
+                if cl > swing_high_price and not crossed[last_top_index]:
                     crossed[last_top_index] = True
-                    # Initialise with default values from previous candle
-                    default_index = close_index - 1
+                    default_index = i - 1
                     obBtm = _high[default_index]
                     obTop = _low[default_index]
                     obIndex = default_index
-                    # Look for a lower low between last_top_index and current candle
-                    if close_index - last_top_index > 1:
+                    if i - last_top_index > 1:
                         start = last_top_index + 1
-                        end = close_index  # up to but not including close_index
+                        end = i
                         if end > start:
                             segment = _low[start:end]
                             min_val = segment.min()
-                            # In case of ties, take the last occurrence
                             candidates = np.nonzero(segment == min_val)[0]
                             if candidates.size:
                                 candidate_index = start + candidates[-1]
                                 obBtm = _low[candidate_index]
                                 obTop = _high[candidate_index]
                                 obIndex = candidate_index
-                    # Set bullish OB values
                     ob[obIndex] = 1
                     top_arr[obIndex] = obTop
                     bottom_arr[obIndex] = obBtm
-                    vol_cur = _volume[close_index]
-                    vol_prev1 = _volume[close_index - 1] if close_index >= 1 else 0.0
-                    vol_prev2 = _volume[close_index - 2] if close_index >= 2 else 0.0
+                    vol_cur = _volume[i]
+                    vol_prev1 = _volume[i - 1] if i >= 1 else 0.0
+                    vol_prev2 = _volume[i - 2] if i >= 2 else 0.0
                     obVolume[obIndex] = vol_cur + vol_prev1 + vol_prev2
                     lowVolume[obIndex] = vol_prev2
                     highVolume[obIndex] = vol_cur + vol_prev1
@@ -520,44 +536,22 @@ class smc:
                     percentage[obIndex] = (min(highVolume[obIndex], lowVolume[obIndex]) / max_vol * 100.0) if max_vol != 0 else 100.0
                     active_bullish.append(obIndex)
 
-        # List to track active bearish order blocks
-        active_bearish = []
-        for i in range(ohlc_len):
-            close_index = i
-            # Update existing bearish OB
-            for idx in active_bearish.copy():
-                if breaker[idx]:
-                    if _low[close_index] < bottom_arr[idx]:
-                        ob[idx] = 0
-                        top_arr[idx] = 0.0
-                        bottom_arr[idx] = 0.0
-                        obVolume[idx] = 0.0
-                        lowVolume[idx] = 0.0
-                        highVolume[idx] = 0.0
-                        mitigated_index[idx] = 0
-                        percentage[idx] = 0.0
-                        active_bearish.remove(idx)
-                else:
-                    if ((not close_mitigation and _high[close_index] > top_arr[idx])
-                        or (close_mitigation and max(_open[close_index], _close[close_index]) > top_arr[idx])):
-                        breaker[idx] = True
-                        mitigated_index[idx] = close_index
-
-            # Find last swing low index less than current candle
-            pos = np.searchsorted(swing_low_indices, close_index)
-            last_btm_index = swing_low_indices[pos - 1] if pos > 0 else None
+            # --- Detect new bearish OB (swing low crossed) ---
+            while last_bear_pos < n_swing_lo and swing_low_indices[last_bear_pos] < i:
+                last_bear_pos += 1
+            last_btm_index = swing_low_indices[last_bear_pos - 1] if last_bear_pos > 0 else None
 
             if last_btm_index is not None:
                 swing_low_price = swing_lv[last_btm_index]
-                if _close[close_index] < swing_low_price and not crossed[last_btm_index]:
+                if cl < swing_low_price and not crossed[last_btm_index]:
                     crossed[last_btm_index] = True
-                    default_index = close_index - 1
+                    default_index = i - 1
                     obTop = _high[default_index]
                     obBtm = _low[default_index]
                     obIndex = default_index
-                    if close_index - last_btm_index > 1:
+                    if i - last_btm_index > 1:
                         start = last_btm_index + 1
-                        end = close_index
+                        end = i
                         if end > start:
                             segment = _high[start:end]
                             max_val = segment.max()
@@ -570,9 +564,9 @@ class smc:
                     ob[obIndex] = -1
                     top_arr[obIndex] = obTop
                     bottom_arr[obIndex] = obBtm
-                    vol_cur = _volume[close_index]
-                    vol_prev1 = _volume[close_index - 1] if close_index >= 1 else 0.0
-                    vol_prev2 = _volume[close_index - 2] if close_index >= 2 else 0.0
+                    vol_cur = _volume[i]
+                    vol_prev1 = _volume[i - 1] if i >= 1 else 0.0
+                    vol_prev2 = _volume[i - 2] if i >= 2 else 0.0
                     obVolume[obIndex] = vol_cur + vol_prev1 + vol_prev2
                     lowVolume[obIndex] = vol_cur + vol_prev1
                     highVolume[obIndex] = vol_prev2
@@ -647,7 +641,9 @@ class smc:
 
         # Process bullish liquidity (HighLow == 1)
         bull_indices = np.nonzero(shl_HL == 1)[0]
-        for i in bull_indices:
+        n_bull = len(bull_indices)
+        for bi in range(n_bull):
+            i = bull_indices[bi]
             # Skip if this candidate has already been used.
             if shl_HL[i] != 1:
                 continue
@@ -658,30 +654,23 @@ class smc:
             group_end = i
 
             # Determine the swept index:
-            # Find the first candle after i where the high reaches or exceeds range_high.
             c_start = i + 1
             if c_start < n:
-                cond = ohlc_high[c_start:] >= range_high
-                if np.any(cond):
-                    swept = c_start + int(np.argmax(cond))
-                else:
-                    swept = 0
+                remaining = ohlc_high[c_start:]
+                hits = np.where(remaining >= range_high)[0]
+                swept = (c_start + hits[0]) if len(hits) > 0 else 0
             else:
                 swept = 0
 
-            # Iterate only over candidate indices greater than i.
-            for j in bull_indices:
-                if j <= i:
-                    continue
-                # Emulate the inner loop break: if we've reached or passed the swept index, stop.
+            # Only scan candidates after i (start from bi+1 in the index array)
+            for bj in range(bi + 1, n_bull):
+                j = bull_indices[bj]
                 if swept and j >= swept:
                     break
-                # If candidate j is within the liquidity range, add it and mark it as used.
                 if shl_HL[j] == 1 and (range_low <= shl_Level[j] <= range_high):
                     group_levels.append(shl_Level[j])
                     group_end = j
                     shl_HL[j] = 0  # mark candidate as used
-            # Only record liquidity if more than one candidate is grouped.
             if len(group_levels) > 1:
                 avg_level = sum(group_levels) / len(group_levels)
                 liquidity[i] = 1
@@ -691,7 +680,9 @@ class smc:
 
         # Process bearish liquidity (HighLow == -1)
         bear_indices = np.nonzero(shl_HL == -1)[0]
-        for i in bear_indices:
+        n_bear = len(bear_indices)
+        for bi in range(n_bear):
+            i = bear_indices[bi]
             if shl_HL[i] != -1:
                 continue
             low_level = shl_Level[i]
@@ -700,20 +691,16 @@ class smc:
             group_levels = [low_level]
             group_end = i
 
-            # Find the first candle after i where the low reaches or goes below range_low.
             c_start = i + 1
             if c_start < n:
-                cond = ohlc_low[c_start:] <= range_low
-                if np.any(cond):
-                    swept = c_start + int(np.argmax(cond))
-                else:
-                    swept = 0
+                remaining = ohlc_low[c_start:]
+                hits = np.where(remaining <= range_low)[0]
+                swept = (c_start + hits[0]) if len(hits) > 0 else 0
             else:
                 swept = 0
 
-            for j in bear_indices:
-                if j <= i:
-                    continue
+            for bj in range(bi + 1, n_bear):
+                j = bear_indices[bj]
                 if swept and j >= swept:
                     break
                 if shl_HL[j] == -1 and (range_low <= shl_Level[j] <= range_high):
@@ -900,34 +887,41 @@ class smc:
             time_zone = time_zone.replace("UTC", "Etc/GMT")
             ohlc.index = ohlc.index.tz_localize(time_zone).tz_convert("UTC")
 
-        start_time = datetime.strptime(
-            default_sessions[session]["start"], "%H:%M"
-        ).strftime("%H:%M")
-        start_time = datetime.strptime(start_time, "%H:%M")
-        end_time = datetime.strptime(
-            default_sessions[session]["end"], "%H:%M"
-        ).strftime("%H:%M")
-        end_time = datetime.strptime(end_time, "%H:%M")
+        start_str = default_sessions[session]["start"]
+        end_str = default_sessions[session]["end"]
+        start_parts = start_str.split(":")
+        end_parts = end_str.split(":")
+        start_minutes = int(start_parts[0]) * 60 + int(start_parts[1])
+        end_minutes = int(end_parts[0]) * 60 + int(end_parts[1])
 
-        # if the candles are between the start and end time then it is an active session
-        active = np.zeros(len(ohlc), dtype=np.int32)
-        high = np.zeros(len(ohlc), dtype=np.float32)
-        low = np.zeros(len(ohlc), dtype=np.float32)
+        # Vectorized time-of-day in minutes
+        minutes_of_day = ohlc.index.hour * 60 + ohlc.index.minute
 
-        for i in range(len(ohlc)):
-            current_time = ohlc.index[i].strftime("%H:%M")
-            # convert current time to the second of the day
-            current_time = datetime.strptime(current_time, "%H:%M")
-            if (start_time < end_time and start_time <= current_time <= end_time) or (
-                start_time >= end_time
-                and (start_time <= current_time or current_time <= end_time)
-            ):
-                active[i] = 1
-                high[i] = max(ohlc["high"].iloc[i], high[i - 1] if i > 0 else 0)
-                low[i] = min(
-                    ohlc["low"].iloc[i],
-                    low[i - 1] if i > 0 and low[i - 1] != 0 else float("inf"),
-                )
+        # Vectorized active mask (handles wrap-around sessions like Sydney 21:00-06:00)
+        if start_minutes < end_minutes:
+            active_mask = (minutes_of_day >= start_minutes) & (minutes_of_day <= end_minutes)
+        else:
+            active_mask = (minutes_of_day >= start_minutes) | (minutes_of_day <= end_minutes)
+
+        active = np.where(active_mask, 1, 0).astype(np.int32)
+
+        # Compute cumulative session high/low (reset when session becomes inactive)
+        ohlc_high = ohlc["high"].values
+        ohlc_low = ohlc["low"].values
+        n_bars = len(ohlc)
+        high = np.zeros(n_bars, dtype=np.float32)
+        low = np.zeros(n_bars, dtype=np.float32)
+
+        # Vectorized: group contiguous active runs, cummax/cummin within each
+        active_mask_bool = active == 1
+        if active_mask_bool.any():
+            transitions = np.diff(active, prepend=0)
+            group_ids = np.cumsum((transitions == 1).astype(np.int32))
+            group_ids[~active_mask_bool] = -1
+            tmp = pd.DataFrame({"group": group_ids, "high": ohlc_high, "low": ohlc_low})
+            active_df = tmp[active_mask_bool]
+            high[active_mask_bool] = active_df.groupby("group")["high"].cummax().values.astype(np.float32)
+            low[active_mask_bool] = active_df.groupby("group")["low"].cummin().values.astype(np.float32)
 
         active = pd.Series(active, name="Active")
         high = pd.Series(high, name="High")
@@ -952,50 +946,60 @@ class smc:
 
         swing_highs_lows = swing_highs_lows.copy()
 
-        direction = np.zeros(len(ohlc), dtype=np.int32)
-        current_retracement = np.zeros(len(ohlc), dtype=np.float64)
-        deepest_retracement = np.zeros(len(ohlc), dtype=np.float64)
+        n = len(ohlc)
+        shl_hl = swing_highs_lows["HighLow"].values
+        shl_lv = swing_highs_lows["Level"].values
+        ohlc_low = ohlc["low"].values
+        ohlc_high = ohlc["high"].values
 
-        top = 0
-        bottom = 0
-        for i in range(len(ohlc)):
-            if swing_highs_lows["HighLow"][i] == 1:
-                direction[i] = 1
-                top = swing_highs_lows["Level"][i]
-                # deepest_retracement[i] = 0
-            elif swing_highs_lows["HighLow"][i] == -1:
-                direction[i] = -1
-                bottom = swing_highs_lows["Level"][i]
-                # deepest_retracement[i] = 0
+        direction = np.zeros(n, dtype=np.int32)
+        current_retracement = np.zeros(n, dtype=np.float64)
+        deepest_retracement = np.zeros(n, dtype=np.float64)
+
+        # Precompute swing indices to skip NaN checks on non-swing bars
+        swing_indices = np.flatnonzero(~np.isnan(shl_hl))
+        swing_map = {}  # bar_index -> (hl_value, level_value)
+        for si in swing_indices:
+            swing_map[si] = (shl_hl[si], shl_lv[si])
+
+        top = 0.0
+        bottom = 0.0
+        prev_dir = 0
+        prev_deepest = 0.0
+        for i in range(n):
+            if i in swing_map:
+                hl_val, lv_val = swing_map[i]
+                if hl_val == 1:
+                    direction[i] = 1
+                    top = lv_val
+                else:
+                    direction[i] = -1
+                    bottom = lv_val
             else:
-                direction[i] = direction[i - 1] if i > 0 else 0
+                direction[i] = prev_dir
 
-            if direction[i - 1] == 1:
+            if prev_dir == 1:
                 divisor = top - bottom
-                current_retracement[i] = round(
-                    100 - (((ohlc["low"].iloc[i] - bottom) / divisor) * 100) if divisor != 0 else 0, 1
-                )
-                deepest_retracement[i] = max(
-                    (
-                        deepest_retracement[i - 1]
-                        if i > 0 and direction[i - 1] == 1
-                        else 0
-                    ),
-                    current_retracement[i],
-                )
+                if divisor != 0:
+                    current_retracement[i] = 100 - (((ohlc_low[i] - bottom) / divisor) * 100)
+                deepest_retracement[i] = max(prev_deepest, current_retracement[i])
             if direction[i] == -1:
                 divisor = bottom - top
-                current_retracement[i] = round(
-                    100 - ((ohlc["high"].iloc[i] - top) / divisor) * 100 if divisor != 0 else 0, 1
-                )
+                if divisor != 0:
+                    current_retracement[i] = 100 - ((ohlc_high[i] - top) / divisor) * 100
                 deepest_retracement[i] = max(
-                    (
-                        deepest_retracement[i - 1]
-                        if i > 0 and direction[i - 1] == -1
-                        else 0
-                    ),
+                    prev_deepest if prev_dir == -1 else 0,
                     current_retracement[i],
                 )
+
+            prev_dir = direction[i]
+            prev_deepest = deepest_retracement[i]
+
+        # Vectorized round (much faster than per-bar round())
+        current_retracement = np.round(current_retracement, 1)
+        deepest_retracement = np.round(deepest_retracement, 1)
+        # Ensure deepest >= current after rounding (rounding can flip the relationship)
+        deepest_retracement = np.maximum(deepest_retracement, current_retracement)
 
         # shift the arrays by 1
         current_retracement = np.roll(current_retracement, 1)
@@ -1004,8 +1008,8 @@ class smc:
 
         # remove the first 3 retracements as they get calculated incorrectly due to not enough data
         remove_first_count = 0
-        for i in range(len(direction)):
-            if i + 1 == len(direction):
+        for i in range(n):
+            if i + 1 == n:
                 break
             if direction[i] != direction[i + 1]:
                 remove_first_count += 1

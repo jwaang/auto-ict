@@ -367,6 +367,61 @@ def _print_ict_summary(ctx: dict):
     print()
 
 
+def cmd_regime_test(
+    data_path: str,
+    ticker: str = "ES",
+    balance: float | None = None,
+    min_score: int | None = None,
+    entry_tf: str = "15min",
+    step: int | None = None,
+    strategy: str = "default",
+):
+    """Run backtest on representative regime weeks for quick validation."""
+    from backtest.engine import run_regime_backtest
+    from backtest.regimes import get_regime_weeks
+    from backtest.report import print_regime_report
+    from data.historical import load_continuous_contract
+
+    balance = balance or STARTING_BALANCE
+    min_score = min_score if min_score is not None else MIN_CONFLUENCE_SCORE
+    regime_weeks = get_regime_weeks(ticker.upper())
+
+    print(f"\n{'='*60}")
+    print(f"  ICT Regime Test")
+    print(f"  Data: {data_path}")
+    print(f"  Ticker: {ticker}")
+    print(f"  Entry TF: {entry_tf}")
+    print(f"  Strategy: {strategy}")
+    print(f"  Regimes: {len(regime_weeks)} weeks")
+    for w in regime_weeks:
+        print(f"    {w.label}: {w.start} to {w.end}")
+    print(f"{'='*60}")
+
+    # Load full dataset once
+    print("\n[1/2] Loading historical data...")
+    try:
+        df_1m = load_continuous_contract(data_path)
+        print(f"      Loaded {len(df_1m):,} bars ({df_1m['timestamp'].min()} to {df_1m['timestamp'].max()})")
+    except Exception as e:
+        print(f"  ERROR: Failed to load data: {e}")
+        return
+
+    # Run regime backtests
+    print("\n[2/2] Running regime backtests...")
+    result = run_regime_backtest(
+        df_1m=df_1m,
+        regime_weeks=regime_weeks,
+        starting_balance=balance,
+        min_score=min_score,
+        ticker=ticker,
+        entry_tf=entry_tf,
+        step_bars=step,
+        strategy=strategy,
+    )
+
+    print_regime_report(result)
+
+
 def cmd_backtest(
     data_path: str,
     ticker: str = "ES",
@@ -382,7 +437,7 @@ def cmd_backtest(
 ):
     """Run a walk-forward backtest on historical data."""
     from backtest.engine import run_backtest
-    from backtest.report import print_report, print_trades, save_results, generate_equity_csv
+    from backtest.report import print_report, print_trades, save_results, generate_equity_csv, generate_trade_log_csv
     from config import HTF_WARMUP_DAYS
     from data.historical import load_continuous_contract
 
@@ -440,15 +495,17 @@ def cmd_backtest(
         print_trades(result, limit=show_trades)
 
     # Save results
+    from config import PROJECT_ROOT
     if save_path:
         save_results(result, save_path)
         eq_path = save_path.replace(".json", "_equity.csv")
         generate_equity_csv(result, eq_path)
+        trade_log_path = save_path.replace(".json", "_trades.csv")
+        generate_trade_log_csv(result, trade_log_path)
     else:
-        # Default save location
-        from config import PROJECT_ROOT
         default_path = str(PROJECT_ROOT / "logs" / "backtest_results.json")
         save_results(result, default_path)
+        generate_trade_log_csv(result, str(PROJECT_ROOT / "logs" / "backtest_trades.csv"))
 
 
 def cmd_optimize(
@@ -585,6 +642,8 @@ def main():
     p_bt.add_argument("--strategy", default="default",
                        choices=["default", "ict_2022", "silver_bullet"],
                        help="Trading strategy (default: confluence scoring)")
+    p_bt.add_argument("--regime-test", action="store_true",
+                       help="Quick test on 4 representative weeks (one per market regime)")
     p_bt.add_argument("--save", help="Path to save results JSON")
     p_bt.add_argument("--trades", type=int, default=20, help="Number of recent trades to show")
 
@@ -619,19 +678,30 @@ def main():
             save=args.save,
         )
     elif args.command == "backtest":
-        cmd_backtest(
-            data_path=args.data,
-            ticker=args.ticker,
-            balance=args.balance,
-            min_score=args.min_score,
-            start=args.start,
-            end=args.end,
-            entry_tf=args.entry_tf,
-            step=args.step,
-            save_path=args.save,
-            show_trades=args.trades,
-            strategy=args.strategy,
-        )
+        if args.regime_test:
+            cmd_regime_test(
+                data_path=args.data,
+                ticker=args.ticker,
+                balance=args.balance,
+                min_score=args.min_score,
+                entry_tf=args.entry_tf,
+                step=args.step,
+                strategy=args.strategy,
+            )
+        else:
+            cmd_backtest(
+                data_path=args.data,
+                ticker=args.ticker,
+                balance=args.balance,
+                min_score=args.min_score,
+                start=args.start,
+                end=args.end,
+                entry_tf=args.entry_tf,
+                step=args.step,
+                save_path=args.save,
+                show_trades=args.trades,
+                strategy=args.strategy,
+            )
     else:
         parser.print_help()
 

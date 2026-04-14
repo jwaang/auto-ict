@@ -199,6 +199,46 @@ def generate_equity_csv(result: BacktestResult, filepath: str):
     print(f"  Equity curve saved to {filepath}")
 
 
+def generate_trade_log_csv(result: BacktestResult, filepath: str):
+    """Export trade log to CSV for manual review.
+
+    Includes entry/exit details, reasoning, ICT concepts used, and outcome.
+    """
+    closed = [t for t in result.trades if t.get("status") == "CLOSED"]
+    if not closed:
+        return
+
+    rows = []
+    for t in closed:
+        rows.append({
+            "entry_time": t.get("entry_time", ""),
+            "exit_time": t.get("exit_time", ""),
+            "direction": t.get("direction", ""),
+            "entry_price": t.get("entry_price", ""),
+            "stop_loss": t.get("stop_loss", ""),
+            "take_profit": t.get("take_profit", ""),
+            "exit_price": t.get("exit_price", ""),
+            "exit_reason": t.get("exit_reason", ""),
+            "pnl_dollars": t.get("pnl_dollars", ""),
+            "rr_achieved": t.get("rr_achieved", ""),
+            "setup_type": t.get("setup_type", ""),
+            "confluence_score": t.get("confluence_score", ""),
+            "htf_bias": t.get("htf_bias", ""),
+            "risk_reward_ratio": t.get("risk_reward_ratio", ""),
+            "concepts": ", ".join(t.get("concepts", [])),
+            "reasoning": t.get("reasoning", ""),
+            "invalidation": t.get("invalidation", ""),
+            "quantity": t.get("quantity", ""),
+            "risk_amount": t.get("risk_amount", ""),
+        })
+
+    df = pd.DataFrame(rows)
+    path = Path(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=False)
+    print(f"  Trade log saved to {filepath}")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -276,3 +316,55 @@ def _calc_trade_durations(closed_trades: list) -> dict:
 
     avg = sum(durations, pd.Timedelta(0)) / len(durations)
     return {"avg": str(avg)}
+
+
+def print_regime_report(regime_result):
+    """Print per-regime performance table with aggregate."""
+    print(f"\n{'='*70}")
+    print(f"  REGIME TEST RESULTS  ({regime_result.duration_seconds:.1f}s)")
+    print(f"{'='*70}")
+    print(f"  {'Regime':<22} {'Trades':>7} {'WR%':>7} {'PF':>7} {'P&L':>12} {'MaxDD':>7}")
+    print(f"  {'-'*62}")
+
+    all_trades = []
+    total_pnl = 0
+
+    for label, r in regime_result.regime_results.items():
+        trades = len(r.trades)
+        closed = [t for t in r.trades if t["status"] == "CLOSED"]
+        wins = [t for t in closed if (t.get("pnl_dollars") or 0) > 0]
+        wr = len(wins) / len(closed) * 100 if closed else 0
+        pnl = r.final_balance - r.starting_balance
+
+        gross_profit = sum(t.get("pnl_dollars", 0) for t in closed if (t.get("pnl_dollars") or 0) > 0)
+        gross_loss = abs(sum(t.get("pnl_dollars", 0) for t in closed if (t.get("pnl_dollars") or 0) < 0))
+        pf = gross_profit / gross_loss if gross_loss > 0 else (float("inf") if gross_profit > 0 else 0)
+
+        # Max drawdown from equity curve
+        peak = r.starting_balance
+        max_dd = 0
+        bal = r.starting_balance
+        for pt in r.equity_curve:
+            bal = pt.get("balance", bal)
+            peak = max(peak, bal)
+            if peak > 0:
+                dd = (peak - bal) / peak * 100
+                max_dd = max(max_dd, dd)
+
+        pf_str = f"{pf:.2f}" if pf != float("inf") else "inf"
+        print(f"  {label:<22} {trades:>7} {wr:>6.1f}% {pf_str:>7} ${pnl:>10,.0f} {max_dd:>6.1f}%")
+
+        all_trades.extend(closed)
+        total_pnl += pnl
+
+    # Aggregate
+    all_wins = [t for t in all_trades if (t.get("pnl_dollars") or 0) > 0]
+    agg_wr = len(all_wins) / len(all_trades) * 100 if all_trades else 0
+    agg_gp = sum(t.get("pnl_dollars", 0) for t in all_trades if (t.get("pnl_dollars") or 0) > 0)
+    agg_gl = abs(sum(t.get("pnl_dollars", 0) for t in all_trades if (t.get("pnl_dollars") or 0) < 0))
+    agg_pf = agg_gp / agg_gl if agg_gl > 0 else (float("inf") if agg_gp > 0 else 0)
+    agg_pf_str = f"{agg_pf:.2f}" if agg_pf != float("inf") else "inf"
+
+    print(f"  {'-'*62}")
+    print(f"  {'AGGREGATE':<22} {len(all_trades):>7} {agg_wr:>6.1f}% {agg_pf_str:>7} ${total_pnl:>10,.0f}")
+    print(f"{'='*70}")
