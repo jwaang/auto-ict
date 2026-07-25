@@ -81,6 +81,94 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 40 — A tie-handling bug, and the sweep/run rule replicating on three timeframes (July 2026)
+
+Two corrections and the best-supported result this programme has produced.
+
+### The tie bug, which inflated experiments 34-37
+
+Every directional test wrote `(close[t+h] - close[t]) * sign > 0`. An exact zero
+close-to-close change is **6.2% of events at one 5-minute bar**, decaying to 1.2%
+by 24 bars, and that formulation silently assigns every tie to one side.
+
+| tie treatment | reversal rate, sweep-form, h=1 |
+|---|---|
+| ties counted as failures (as published) | 44.70% |
+| ties counted as wins | 50.93% |
+| **ties excluded (correct)** | **47.67%** |
+
+So experiment 34's headline of −5.28 at z −11.68 is really **−2.33 at z −5.22**,
+inflated about twofold. Worse, the "decay with horizon" that made the result look
+like a real microstructure effect partly tracked the **tie rate** decaying from
+6.2% to 1.2%, not the signal.
+
+It also touches experiment 37, where "continuation runs 47-49%, below a coin flip
+at every horizon" becomes roughly 50.6% with ties excluded — *at* the coin flip.
+The paired difference against the control survives, because both sides carried the
+same bias, but that absolute claim was an artifact.
+
+Ties are now excluded rather than assigned.
+
+### The sweep/run rule, which was never applied
+
+ICT separates a liquidity **sweep** (wick through, close back inside, reversal)
+from a **run** (close beyond, sustained displacement, continuation), and the rule
+choosing between them is not mechanical:
+
+> "If the higher-timeframe direction agrees with the side that just got swept,
+> expect a run; if it disagrees, expect a sweep."
+
+Experiments 34 and 35 applied no bias condition and predicted reversal for every
+event. That is a mixture, and the −2.33 above is what a mixture produces.
+
+Splitting on bias agreement, with edge measured against **what ICT predicts for
+that cell**, so positive means the methodology is right (5-minute):
+
+| cell | n | h1 | h2 | h4 | h12 | h24 |
+|---|---|---|---|---|---|---|
+| bias agrees → expect continuation | 28,004 | +0.99 (z 3.24) | +1.53 (z 3.94) | +1.85 (z 3.69) | +2.48 (z 3.10) | +3.57 (z 3.27) |
+| bias disagrees → expect reversal | 22,880 | +0.72 | +1.05 | +1.43 | +1.92 | +2.41 |
+| **neutral bias** | 55,330 | +0.13 | +0.32 | +0.21 | +0.51 | +0.47 |
+
+**The neutral cell is flat at every horizon (z < 1.2).** That is an internal
+control nobody designed as one: where the methodology makes no prediction, there
+is no effect. A spurious pattern would not respect that boundary.
+
+### The specific cell, replicated on three timeframes
+
+Sweep form — wick through, closed back inside — **with bias agreeing**, so a
+failed break in the direction of the prevailing structure:
+
+| timeframe | n | h1 | h4 | h24 |
+|---|---|---|---|---|
+| **1m** | **10,108** | **+5.57 (z 10.24)** | **+4.92 (z 8.31)** | **+3.72 (z 4.70)** |
+| 5m | 3,103 | +3.75 (z 3.99) | +3.45 (z 2.97) | +2.33 |
+| 15m | 1,083 | +5.00 (z 3.12) | +3.31 | +2.47 |
+
+Same sign, comparable magnitude, significant at every horizon on 1-minute where
+n clears 5,000. z 10.24 survives a Bonferroni correction over all 30 cells
+examined, which needs about 3.4.
+
+It also passes the three-part rule adopted after two retractions: `|z| > 3`,
+`n >= 5000`, **and replication on an independent timeframe**. It is the first
+result in this programme to do so.
+
+The run-form cell is *weaker* than the sweep-form cell (−0.04 to +1.40 on 1m), so
+the effect is specific rather than smeared across all liquidity events.
+
+### Still probably not tradeable, and by how much
+
+A +5.57-point edge is 55.6% directional accuracy. At the two-hour horizon on 5m
+the edge is +3.57 against an expected absolute move around 7 points, so roughly
+**0.5 points of expectancy against 1.02 points of round-turn cost.**
+
+That is a ratio of about **1:2**, against 1:7 for the old sweep reading and 1:13
+for the FVG magnet. The closest anything has come, and still under water. The next
+test is whether barrier geometry closes a two-fold gap — it has not closed a
+seven-fold one before.
+
+---
+
 ## Experiment 39 — The exceptional-tier reaction does not replicate (July 2026)
 
 Experiment 38 reported the tier reaction ordering as −3.07, −0.35, +3.22 and
