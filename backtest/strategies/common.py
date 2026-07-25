@@ -170,23 +170,56 @@ def detect_sweep_mss_fvg_sequence(
         direction: 'bullish' or 'bearish'
         current_idx: Current bar index in the entry DataFrame
         lookback: Max bars to look back for the sweep
-        window_bounds: Optional (start_idx, end_idx) to restrict all
-                       detections to a specific time window (Silver Bullet)
+        window_bounds: Optional (start_idx, end_idx) for a Silver Bullet window.
+                       Which parts of the sequence it constrains is set by the
+                       `sb_window_scope` override — see below.
 
     Returns:
         Dict with {sweep, mss, fvg, ob} if found, or None.
+
+    On the window scope. Confining the *whole* chain to one hour makes Silver
+    Bullet arithmetically impossible rather than selective: the window holds 4 bars
+    at 15m and 12 at 5m, while a CHoCH alone needs a swing to form, confirm and then
+    break — roughly 15 bars at swing_length 5. Measured, that produced zero trades
+    over a full year at both timeframes, and 220 of 220 in-window directional bars
+    failed to find a sequence.
+
+    Research describes the actual rule as the *first FVG formed inside the window*,
+    aligned with HTF bias and an MSS. So three readings are available:
+
+        "all"      every leg in-window (the original, and impossible)
+        "mss_fvg"  MSS and FVG in-window, the sweep may precede it
+        "fvg"      only the FVG in-window, the loosest reading
     """
+    from backtest import params
+
     liquidity = detections.get("liquidity", [])
     breaks = detections.get("breaks", [])
     fvgs = detections.get("unfilled_fvgs", [])
     obs = detections.get("unmitigated_obs", [])
 
+    scope = params.get("sb_window_scope", "all")
     min_idx = current_idx - lookback
+    window_start = window_end = None
     if window_bounds:
-        min_idx = max(min_idx, window_bounds[0])
-        current_idx_limit = min(current_idx, window_bounds[1])
-    else:
-        current_idx_limit = current_idx
+        window_start, window_end = window_bounds
+        if scope == "all":
+            min_idx = max(min_idx, window_start)
+
+    current_idx_limit = current_idx
+
+    def _in_window(idx: int, leg: str) -> bool:
+        """Whether a leg must sit inside the Silver Bullet window."""
+        if window_bounds is None:
+            return True
+        constrained = {
+            "all": ("sweep", "mss", "fvg"),
+            "mss_fvg": ("mss", "fvg"),
+            "fvg": ("fvg",),
+        }.get(scope, ("sweep", "mss", "fvg"))
+        if leg not in constrained:
+            return True
+        return window_start <= idx <= window_end
 
     # Step 1: Find swept liquidity zones
     sweep_type = "sell_side" if direction == "bullish" else "buy_side"
@@ -196,6 +229,7 @@ def detect_sweep_mss_fvg_sequence(
         and z.get("swept")
         and z.get("sweep_candle_index") is not None
         and min_idx <= z["sweep_candle_index"] <= current_idx_limit
+        and _in_window(z["sweep_candle_index"], "sweep")
     ]
     # Most recent sweep first
     sweeps.sort(key=lambda z: z["sweep_candle_index"], reverse=True)
@@ -210,6 +244,7 @@ def detect_sweep_mss_fvg_sequence(
             and b.get("direction") == direction
             and b["candle_index"] > sweep_idx
             and b["candle_index"] <= current_idx_limit
+            and _in_window(b["candle_index"], "mss")
         ]
         if not qualifying_chochs:
             continue
@@ -222,6 +257,7 @@ def detect_sweep_mss_fvg_sequence(
             if f.get("type") == direction
             and f["candle_index"] > mss["candle_index"]
             and f["candle_index"] <= current_idx_limit
+            and _in_window(f["candle_index"], "fvg")
         ]
         if not qualifying_fvgs:
             continue

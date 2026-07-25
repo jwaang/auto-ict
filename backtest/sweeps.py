@@ -333,6 +333,68 @@ def strategies_5m(span=SCREEN_H2, bias: str = "no_pd_v2") -> list[dict]:
     ]
 
 
+def silver_bullet_scope(span=SCREEN_H2, bias: str = "no_pd_v2") -> list[dict]:
+    """How much of the sequence must sit inside the Silver Bullet hour?
+
+    Confining the whole chain makes the setup arithmetically impossible — zero
+    trades over a full year at both 15m and 5m, with 220 of 220 in-window
+    directional bars failing. Research describes the rule as the first FVG formed
+    inside the window aligned with HTF bias and an MSS, so the sweep at least may
+    precede it.
+
+    Run at 5m, where the hour holds 12 bars rather than 4.
+    """
+    base = BIAS_VARIANTS[bias]
+    return [
+        _cell(f"sbscope:{scope}", {**base, "sb_window_scope": scope}, span,
+              strategy="silver_bullet", entry_tf="5min", hypothesis=note)
+        for scope, note in (
+            ("all", "The original reading: sweep, MSS and FVG all in-window. "
+                    "Expected to stay at zero — kept as the control."),
+            ("mss_fvg", "MSS and FVG in-window, sweep may precede. Closest to the "
+                        "documented rule."),
+            ("fvg", "Only the FVG in-window. Loosest reading; most trades."),
+        )
+    ]
+
+
+# Training-span slices that the 2023 H2 screen never touched. Re-running the screen
+# window would not be new evidence.
+SB_OUT_OF_SCREEN = (
+    ("2021-08-01", "2022-07-31"),
+    ("2022-08-01", "2023-06-30"),
+    ("2024-01-01", "2024-12-31"),
+)
+
+
+def silver_bullet_extend(span=None, bias: str = "no_pd_v2") -> list[dict]:
+    """Grow the Silver Bullet sample on data the screen did not see.
+
+    The `fvg` window scope is the first configuration in this project to show a
+    positive edge over its own benchmark (+15.0 points), profit factor above 1
+    (1.60), positive expectancy (+0.40R) and single-digit drawdown (9%).
+
+    It is also 25 trades, at z = 1.65, with a 95% confidence interval on the win
+    rate spanning 25% to 63% — an interval that contains the benchmark. Against 34
+    configurations tried, the bar for believing a data-mined result is t > 3, which
+    25 trades cannot reach even in principle.
+
+    So this is not a result yet, it is a hypothesis with a sample size problem. These
+    three slices cover roughly three years the screen never used, at about 50 trades
+    a year, which should bring the pooled sample near 175. Still short of 200, and
+    the holdout stays untouched.
+    """
+    base = {**BIAS_VARIANTS[bias], "sb_window_scope": "fvg"}
+    return [
+        _cell(f"sbext:{start[:7]}", base,
+              {"trade_start": start, "trade_end": end},
+              strategy="silver_bullet", entry_tf="5min",
+              hypothesis=f"Out-of-screen slice {start} to {end}. Does the +15 point "
+                         f"edge survive on data that did not select it?")
+        for start, end in SB_OUT_OF_SCREEN
+    ]
+
+
 def smoke(span=None) -> list[dict]:
     """Two cells over one month — verifies the harness before a long run.
 
@@ -354,6 +416,8 @@ SWEEPS = {
     "triggers": triggers,
     "execution_tf": execution_tf,
     "strategies_5m": strategies_5m,
+    "sb_scope": silver_bullet_scope,
+    "sb_extend": silver_bullet_extend,
     "bias": bias_rules,
     "geometry": geometry,
     "swing": swing_lengths,
