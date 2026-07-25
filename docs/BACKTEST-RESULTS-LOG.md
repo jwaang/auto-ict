@@ -40,6 +40,126 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 28 — The only positive component in the program was a bug (July 2026)
+
+Runtime: 20.5 min to re-baseline, seconds for the rest. One code change, ten new
+tests, five predictions registered before the run and three red flags.
+
+### The question
+
+Experiment 27 found two faults in the day-trade cutoff at `engine.py:307`. The
+close fired only on a bar whose ET hour was 16, so on holidays and half-days
+with no such bar the position was carried for days; and nothing stopped an entry
+being taken during that hour. Fixing both and re-running experiment 26's cell
+says what the strategy looks like without them.
+
+### The fix
+
+The close now fires on the last bar at or before 16:00 ET on the bar's own CME
+session day, which works whether or not the cutoff bar traded. Entries at or
+after the cutoff are refused.
+
+Codex caught a bug in the fix before it was written. The obvious rule — close
+when the next bar belongs to a different session day — lands an hour late on
+every ordinary weekday, because after 17:00 ET the next bar is the 18:00 evening
+open and that already belongs to the next session day. The rule has to be
+anchored on the cutoff, not on the session boundary.
+
+Reading the next bar's timestamp to find the last one before the cutoff is not
+look-ahead: no price or volume is taken from it, and it stands in for the
+session calendar that live trading gets from a clock.
+
+### Every prediction held
+
+| registered before the run | before | after | |
+|---|---|---|---|
+| gross falls toward break-even | +$10,717.50 | **+$5,030.50** | pass |
+| trades drop by roughly 31 | 841 | **807** | pass |
+| no entry in the 16:00 ET hour | 31 | **0** | pass |
+| no trade spans a session day | 38 | **0** | pass |
+| longest hold becomes intraday | 119.2 h | **21.8 h** | pass |
+
+The remaining 21.8-hour hold is one session, not two: an entry on the 18:15 ET
+evening open held to the following 16:00 cutoff is 21.75 hours inside a single
+CME trading day. Cross-session holds are zero.
+
+All three red flags stayed down. Session-end gross did not rise ($29,900 →
+$29,712). No exit landed at 17:00 ET. Net got **worse**, −$49,142.50 →
+−$52,113.25, which is what fixing a rule that was handing out free profit should
+do.
+
+### The two resolvers now agree exactly
+
+Experiment 27's finding was that the engine and `Intrabar.first_touch` resolved
+the same trade differently on 40 of 841 trades, so the strategy and its
+benchmark were measured with different rulers. On the fixed run:
+
+| engine | first_touch | n |
+|---|---|---|
+| SL_HIT | SL_HIT | 486 |
+| TP_HIT | TP_HIT | 243 |
+| SESSION_END | none | 78 |
+
+**Zero disagreements out of 807.** `nullmodel.session_end()` needed no change
+after all: its calendar-day rule only diverged for entries after 16:00 ET, and
+those no longer exist. Every edge-against-null figure in this program is now
+measured on one ruler.
+
+### The +1.2 direction component does not survive
+
+Experiment 26 recorded a +1.2 win-rate-point direction edge and called it the
+first positive component measured anywhere in the program. On the clean
+baseline, scored against a matched paired null at the strategy's own bars:
+
+| run | barrier n | WR | paired null | edge | z |
+|---|---|---|---|---|---|
+| experiment 26, as published | 764 | 34.16 | 33.00 | **+1.2** | +0.68 |
+| pre-fix trades, rescored here | 760 | 33.03 | 33.52 | −0.5 | −0.29 |
+| **post-fix trades** | **729** | **33.33** | **34.27** | **−0.9** | **−0.53** |
+
+The strategy's barrier win rate fell 0.83 points when the faults were fixed,
+from 261 winners in 764 to 243 in 729. That is the direct arithmetic of the
+holiday carries: 14 of the 24 were TP hits that a correctly-closed position
+would never have reached.
+
+Read it carefully. All three rows are statistically indistinguishable from zero,
+so the honest claim is not "direction skill is negative" — it is that **the one
+positive number this program ever produced does not reproduce** once the rule
+violations are removed. Nothing positive has now been measured anywhere.
+
+### The stop-width result survives on clean data
+
+Experiment 27's conclusion re-run against the fixed trades, target held at its
+original price:
+
+| stop | barrier n | WR | paired null | edge | z | bar | mean net R |
+|---|---|---|---|---|---|---|---|
+| actual 9.4 | 729 | 33.33 | 34.27 | −0.9 | −0.53 | 4.24 | −0.162 |
+| 15 | 689 | 45.43 | 46.04 | −0.6 | −0.32 | 3.14 | −0.082 |
+| 20 | 645 | 54.73 | 53.93 | +0.8 | 0.41 | 2.69 | −0.046 |
+| 30 | 593 | 64.25 | 65.10 | −0.9 | −0.43 | 2.10 | −0.056 |
+| 40 | 541 | 73.01 | 74.56 | −1.5 | −0.83 | 1.72 | −0.046 |
+| 60 | 459 | 87.58 | 88.22 | −0.6 | −0.42 | 1.28 | −0.034 |
+
+Same flat noisy line, max |z| 0.83, mean net R negative at every width. The
++3.5 selection artifact that appeared at a 60-point stop in the secondary table
+of experiment 27 is now +1.1, which is what a best-of-twelve artifact does when
+the data underneath it moves.
+
+### What is now established
+
+1. **Nothing positive has been measured in this program.** The last positive
+   figure was a consequence of two faults in the day-trade cutoff.
+2. **The strategy and its benchmark now resolve identically** on all 807 trades,
+   so future edge figures are comparisons of skill rather than of rulers.
+3. **Costs are 11.4 times gross.** $57,143.75 against +$5,030.50.
+
+The two open questions from experiment 26 are both closed. What remains needs a
+different instrument, a different data source such as order flow, or accepting
+that 15-minute ES is efficient at this horizon.
+
+---
+
 ## Experiment 27 — A wider stop does not pay, and two session-end faults surface (July 2026)
 
 Configurations tried to date: **65**, plus twelve offline re-resolutions of

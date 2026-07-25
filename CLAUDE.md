@@ -258,34 +258,35 @@ coin flip at the moments this strategy chooses does 2.0 points worse than a coin
 flip at random moments, which is what a retracement entry into an FVG buys: entry
 against immediate momentum. The bias rule then adds 1.2 points back.
 
-That made two tests worth running. The first is done. **The +1.2 has no economic
-value at any geometry**: re-resolving experiment 26's own trades at stops of 15,
-20, 30, 40 and 60 points leaves edge against a matched paired null flat and
-noisy (−0.5 to +0.1, max |z| 0.74) against a bar that falls from 4.21 to 1.28,
-and mean net R negative at every width. A wider stop shrinks the loss per R,
-because cost drag falls as `1.02 / stop`; it never turns it positive. See
-experiment 27.
+**Both of those are now closed, and the +1.2 was a bug.** Experiment 27 traced
+it to the day-trade cutoff at `engine.py:307`, which fired only on a bar whose
+ET hour was 16. Databento omits minutes with no trade, so on the 37 of 894
+weekday sessions that are US holidays or half-days no such bar existed and
+positions were carried for days — the longest 119 hours through Independence
+Day. Those 24 carries returned +$9,958.50 gross against a whole-run gross of
++$10,717.50. Nothing stopped an entry during that hour either, so 31 more opened
+at the cutoff and 19 were liquidated one bar later.
 
-The second is still open: keep the bias, drop the retracement requirement, enter
-at market on the signal bar, and see whether the −2.0 timing penalty goes
-neutral. One cell, ~22 minutes.
+Experiment 28 fixed both — close on the last bar at or before the cutoff on the
+bar's own session day, refuse entries past it — and re-ran the baseline. Every
+prediction registered beforehand held: gross fell to +$5,030.50, trades to 807,
+entries in the cutoff hour to zero, cross-session holds to zero, longest hold to
+21.8 hours, and net got *worse* at −$52,113.25. The engine and
+`Intrabar.first_touch` now resolve **all 807 trades identically**, against 40
+disagreements before, so strategy and benchmark finally share one ruler.
 
-**Two session-end faults are open and block a clean baseline** (`engine.py:307`).
-The force-close fires only on a bar whose ET hour is 16. Nothing stops an entry
-being taken during that hour, so 31 trades opened at the cutoff, 19 of them
-closing on the very next bar for $974 of costs and a 15-minute hold. And when a
-holiday or half-day leaves no 16:00 bar the position rides on — that is 37 of
-894 weekday sessions, 4.1% — so 24 trades were held past their session, the
-longest 119 hours through Independence Day, returning **+$9,958.50 gross against
-the whole run's +$10,717.50**. Nearly all the gross profit came from trades that
-broke the day-trade rule. Both faults descend from the audit fix that replaced
-an unbounded `hour >= 16` with a bounded check — bounding it was right,
-anchoring it to a bar existing in that hour was not. Neither has a test. Fix A
-with an entry guard, B by driving the close from the session calendar, then
-re-run experiment 26's baseline: 54 of its 841 trades are affected.
+On that clean baseline the direction edge is **−0.9 points (z −0.53)**, against
+the +1.2 that experiment 26 published. All of these are indistinguishable from
+zero, so the claim is not that direction skill is negative — it is that **the
+only positive number this program ever produced does not reproduce.** Costs are
+now 11.4x gross.
 
-Beyond that, what remains needs a different instrument, a different data source
-such as order flow, or accepting that 15-minute ES is efficient at this horizon.
+Do not anchor a session rule on the session-day rollover: after 17:00 ET the
+next bar is the 18:00 evening open, which belongs to the next session day, so
+the close lands an hour late on every ordinary weekday.
+
+What remains needs a different instrument, a different data source such as order
+flow, or accepting that 15-minute ES is efficient at this horizon.
 
 ## Confluence Scoring (0-100)
 
