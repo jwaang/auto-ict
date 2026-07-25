@@ -40,7 +40,141 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 25 — The edge metric was measuring the wrong population (July 2026)
+
+Configurations tried to date: **64**. Runtime: 28 min for the extension, plus
+seconds for everything else — the two findings here cost almost no compute
+because they came from re-reading stored results, not from running new ones.
+
+### What was tested
+
+Experiment 24 ended with one positive cell: Silver Bullet on 2023 H2 at 5m,
+reported at +15.0 points over its benchmark, PF 1.60, +8.0% return. The
+pre-registered test was to re-run it on three year-long slices the screen never
+saw and require a positive edge in all three, a pooled z above 3, and profit in
+more than one regime.
+
+### It failed the test, and then the test itself turned out to be wrong
+
+Out-of-screen, by the metric in force at the time:
+
+| slice | n | win rate | benchmark | edge | PF | return |
+|---|---|---|---|---|---|---|
+| 2021-08 → 2022-07 | 23 | 47.8% | 28.0 | +19.8 | 1.59 | +5.9% |
+| 2022-08 → 2023-06 | 42 | 16.7% | 29.6 | −12.9 | 0.17 | −21.5% |
+| 2024 | 58 | 43.1% | 28.2 | +14.9 | 1.03 | +0.9% |
+
+Two of three positive, one catastrophic, combined return −14.7%. That already
+failed the pre-registered bar. But the combination was arithmetically odd:
+break-even at a 2.2:1 target with 9.7% cost drag needs only about +3 points of
+edge, so a pooled +6.3 should have made money and did not.
+
+**Bug 12 — the benchmark and the win rate described different populations.**
+`edge_vs_coinflip` subtracted `stop / (stop + target)` from the *overall* win
+rate. That formula is the first-passage probability for a random walk between two
+absorbing barriers: it describes a trade that ends at its stop or its target and
+nothing else. Session-end and circuit-breaker closes end at whatever price is
+there. They were counted as wins whenever P&L was positive, and they skew to
+small positive scratches — 26 of them across these four runs, an 81% "win rate"
+contributing $7.9k, against barrier trades netting −$14.6k.
+
+Restricting the comparison to barrier exits:
+
+| slice | barrier n | TP/SL | barrier WR | edge | *previously* |
+|---|---|---|---|---|---|
+| 2023 H2 *(selected)* | 20 | 8/12 | 40.0% | +11.0 | *+15.0* |
+| 2021-08 | 16 | 5/11 | 31.3% | +3.3 | *+19.8* |
+| 2022-08 | 36 | 3/33 | 8.3% | −21.3 | *−12.9* |
+| 2024 | 50 | 17/33 | 34.0% | +5.8 | *+14.9* |
+
+Pooled out-of-screen: 102 barrier trades, 24.5% against a 28.7% benchmark —
+**−4.2 points, z −0.93.** The positive result was the metric, not the strategy.
+
+Every run had stored per-exit-reason counts all along, so `load_store` now
+derives the corrected figures for all 64 historical cells rather than re-running
+them. Recomputing a published number from data already on disk is a correction;
+editing the stored numbers would not be, so the backfill derives and never
+mutates. Of 45 rankable cells, **2 have a positive barrier edge and none reach
+z 3; the highest is 0.91.** The positive cells are the small samples.
+
+### Bug 13 — partial closes took the raw target price
+
+`_check_position_fill_managed` passed `target_1r` straight to `_partial_close`
+while every other exit went through `_apply_slippage`. Latent, because trade
+management is off by default, but it would have understated costs on exactly the
+configuration meant to reduce drawdown.
+
+### The benchmark was biased in the other direction too
+
+`stop / (stop + target)` assumes **unlimited time**. Positions are force-closed
+at 16:00 ET, and because the target sits farther away than the stop it needs more
+time, so the cutoff removes target-hits more often than stop-hits. Scoring a
+time-censored sample against an uncensored null understates every result — the
+mirror image of bug 12.
+
+Rather than patch the formula, `backtest/nullmodel.py` measures the null: random
+entry times, random directions, stop and target distances sampled from what the
+strategy actually used, resolved through the same 1-minute first-touch logic and
+the same cutoff. The only remaining difference between null and strategy is which
+moment and which direction was chosen — the thing under test. It also captures
+what no formula does: real ES drift, volatility clustering and the shape of the
+session. Six thousand draws take 0.1 seconds, so it now runs on every cell.
+
+Measured overstatement of the analytic formula, and it scales with the target
+multiple:
+
+| cell | target mult | analytic | measured null | bias |
+|---|---|---|---|---|
+| default 15m 2023 | 1.70x | 37.10% | 36.98% | −0.1 |
+| SB 2022-08 | 2.38x | 29.60% | 27.91% | −1.7 |
+| SB 2024 | 2.55x | 28.20% | 26.07% | −2.1 |
+| SB 2021-08 | 2.57x | 28.00% | 24.95% | −3.1 |
+| SB 2023 H2 | 2.45x | 29.00% | 25.64% | −3.4 |
+
+So censoring explains about a quarter of the gap, not all of it. Against the
+measured null:
+
+| cell | strategy WR | null WR | edge | z |
+|---|---|---|---|---|
+| default 15m 2023 | 27.1% | 36.98% | **−9.8** | **−3.41** |
+| SB 2023 H2 *(screen)* | 40.0% | 25.64% | +14.4 | +1.47 |
+| SB 2021-08 | 31.2% | 24.95% | +6.3 | +0.58 |
+| SB 2022-08 | 8.3% | 27.91% | −19.6 | −2.62 |
+| SB 2024 | 34.0% | 26.07% | +7.9 | +1.28 |
+
+Pooled out-of-screen: **−2.0 points, z −0.47.**
+
+### What to conclude
+
+1. **Silver Bullet is indistinguishable from random**, not worse than it. The
+   measured null moves the pooled figure from −4.2 to −2.0 and z to −0.47. That
+   is a different and more honest statement than the analytic null supported.
+2. **The default confluence strategy is significantly worse than random**, at
+   −9.8 points and z −3.41 on 280 barrier trades. It is not that the entries
+   carry no information; they reliably select bad moments.
+3. **The metric mattered more than any parameter.** Sixty-four configurations
+   produced no reliable winner, and the one apparent winner was an artefact of
+   scoring. Two of the three findings this round came from re-reading data
+   already on disk.
+
+### Correction to the record
+
+Experiment 24's headline — "the first cell in 59 configurations with positive
+edge" — was produced by the broken metric and does not stand. Its bias-sweep
+tables, and every `edge_vs_coinflip` figure in experiments 15 to 24, are
+inflated by the session-end share; the qualitative conclusions there were all
+negative and are unaffected in direction, but the magnitudes are wrong. Rankings
+regenerated from `load_store` supersede them.
+
+---
+
 ## Experiment 24 — Both ICT strategies were dead code (July 2026)
+
+> **Superseded in part by experiment 25.** The "+15.0 edge, first positive cell"
+> headline came from a metric that counted session-end closes as wins against a
+> two-barrier benchmark. Corrected, that cell is +11.0 in the screen and −2.0
+> pooled across three out-of-screen slices at z −0.47. The bug it fixed (both
+> strategies returning no trades) is real and stands.
 
 Configurations tried to date: **56**.
 

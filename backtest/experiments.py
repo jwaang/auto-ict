@@ -70,6 +70,7 @@ def _run_cell(data_path: str, cell: dict, ticker: str, starting_balance: float) 
         row["rejections"] = result.rejections
         row["parameters"] = result.parameters
         row["geometry"] = _geometry(result.trades)
+        row["null"] = _null_benchmark(df, result, cell)
         row["score_buckets"] = _score_buckets(result.trades)
         row["direction_split"] = _direction_split(result.trades)
         row["excursion"] = _excursion_summary(result.trades)
@@ -170,6 +171,45 @@ def barrier_from_exit_reasons(exit_reasons: dict, coinflip: float | None) -> dic
         out["barrier_win_rate"] = round(wins / n * 100, 1)
         if coinflip is not None:
             out.update(_edge(wins, n, coinflip / 100))
+    return out
+
+
+def _null_benchmark(df_1m, result, cell: dict, draws: int = 6000) -> dict:
+    """Score the cell against random entries at its own geometry.
+
+    `stop / (stop + target)` assumes unlimited time to resolve, but positions are
+    force-closed at 16:00 ET. The target is farther away than the stop, so it
+    needs more time, and the cutoff removes target-hits more often than
+    stop-hits — which makes the formula too generous a benchmark. Measured on ES,
+    the overstatement runs about 0.1 points at a 1.7x target and 2 to 3.4 points
+    at 2.5x, so it matters exactly where the targets are widest.
+
+    Random entries on the same bars, at the same geometry, under the same cutoff,
+    remove the assumption entirely. Six thousand draws take about a tenth of a
+    second, so there is no reason to keep guessing.
+    """
+    from data.historical import resample_ohlcv
+    from backtest.nullmodel import geometry_from_trades, run_null_model
+
+    stops, mults = geometry_from_trades(result.trades)
+    if len(stops) == 0:
+        return {}
+    lo = pd.Timestamp(cell["trade_start"], tz="UTC") if cell.get("trade_start") else df_1m["timestamp"].iloc[0]
+    hi = pd.Timestamp(cell["trade_end"], tz="UTC") + pd.Timedelta(days=1) if cell.get("trade_end") else df_1m["timestamp"].iloc[-1]
+    span = df_1m[(df_1m["timestamp"] >= lo) & (df_1m["timestamp"] < hi)].reset_index(drop=True)
+    if span.empty:
+        return {}
+    bars = resample_ohlcv(span, cell.get("entry_tf", "15min"), session_aligned=True)
+    # Seeded on the label so a cell's null is fixed and cannot be re-rolled.
+    out = run_null_model(span, pd.DatetimeIndex(bars["timestamp"]), stops, mults,
+                         n=draws, seed=abs(hash(cell.get("label", ""))) % 2**31)
+    null_rate = out.get("null_win_rate")
+    barrier = _geometry(result.trades)
+    if null_rate is not None and barrier.get("barrier_n"):
+        wins = round(barrier["barrier_win_rate"] / 100 * barrier["barrier_n"])
+        edge = _edge(int(wins), barrier["barrier_n"], null_rate / 100)
+        out["edge_vs_null"] = edge.get("barrier_edge")
+        out["z_vs_null"] = edge.get("barrier_z")
     return out
 
 
@@ -338,15 +378,20 @@ def report(store: Path | str = STORE, top: int = 15) -> pd.DataFrame:
             # barrier and so are not what the benchmark describes.
             cols = ["label", "trade_start", "trade_end", "entry_tf", "strategy",
                     "total_trades", "barrier_n", "longs", "shorts",
-                    "barrier_win_rate", "coinflip_win_rate", "barrier_edge",
+                    "barrier_win_rate", "null_win_rate", "edge_vs_null",
+                    "z_vs_null", "coinflip_win_rate", "barrier_edge",
                     "barrier_z", "win_rate", "nonbarrier_n", "nonbarrier_pnl",
                     "avg_rr", "profit_factor", "gross_pnl", "total_costs",
                     "return_pct", "max_drawdown_pct", "median_stop_pts",
                     "median_target_pts", "seconds", "top_rejection"]
             cols = [c for c in cols if c in rankable.columns]
-            ranked = rankable.sort_values("barrier_edge", ascending=False)
-            print("\n  Ranked by edge over each cell's own coin-flip benchmark,"
-                  "\n  measured over barrier exits only (z is the number to trust):\n")
+            # Prefer the measured null; fall back to the formula for old rows
+            # that predate it.
+            sort_key = ("edge_vs_null" if rankable.get("edge_vs_null") is not None
+                        and rankable["edge_vs_null"].notna().any() else "barrier_edge")
+            ranked = rankable.sort_values(sort_key, ascending=False)
+            print(f"\n  Ranked by {sort_key} — edge over random entries at the same"
+                  "\n  geometry, barrier exits only (z is the number to trust):\n")
             print(ranked[cols].head(top).to_string(index=False))
 
             if "hypothesis" in ranked.columns:
@@ -405,6 +450,8 @@ def load_store(store: Path | str = STORE) -> pd.DataFrame:
                     flat[key] = value
             geom = row.get("geometry") or {}
             flat.update(geom)
+            for key, value in (row.get("null") or {}).items():
+                flat[key] = value
             if "barrier_win_rate" not in geom:
                 # Recorded before the benchmark was restricted to barrier exits.
                 # Derive it from the stored exit-reason counts so old rows stay
