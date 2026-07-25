@@ -81,6 +81,47 @@ Last updated: July 2026.
 
 ---
 
+## Correction — the primitive test asked a question ICT does not make (July 2026)
+
+The commit that added `research/primitive_information.py` recorded "the FVG
+carries no directional information" from n=4418. **The measurement is sound and
+the conclusion is aimed at the wrong claim.**
+
+An FVG is not a directional signal and ICT does not say it is. Both the repo's
+own reference and the wider literature are explicit: an FVG marks an imbalance
+that *price tends to return to in order to rebalance*, and the Consequent
+Encroachment at its 50% midpoint is a **reaction level**. It is a location, not
+a reason to trade. `docs/ICT_Trading_Strategies_Combined_Research.md` places the
+FVG at step 4 of the Universal Setup Structure — the **entry model** — after
+bias, after the liquidity objective, and after the trigger.
+
+So "does price rise after a bullish FVG forms" was never an ICT claim, and
+measuring it flat neither supports nor refutes the methodology.
+
+The directional claims live elsewhere, and the same reference is blunt about
+which: of the liquidity sweep it says **"this is the single most important
+pre-condition for an ICT entry. Without a sweep, the setup is incomplete."**
+
+Restated test programme, by claim type:
+
+| primitive | what ICT actually claims | correct test |
+|---|---|---|
+| Liquidity sweep | reversal after a stop hunt | reversal rate against chance |
+| MSS / CHoCH | trigger confirming a new direction | continuation after a sweep |
+| sweep → MSS → entry | the setup is the *sequence* | does ordering beat its parts |
+| FVG | magnet; price returns to rebalance | fill rate against matched random zones |
+| FVG CE | reaction level at the 50% midpoint | reversal rate at CE against a random level |
+| OB, Breaker, IFVG | location to enter from | reaction rate on retest |
+| OTE | better entry depth | 61.8-79% against other retracement depths |
+
+The one result that stands from that commit is the **order block finding**: a
+full-frame pass finds 36 OBs in a year where windowed passes find 243, and the
+survivors are mainly unmitigated ones — an order block price never traded back
+into, which is selection on the future. That invalidated a 97% win rate and the
+mechanism is real regardless of which claim is being tested.
+
+---
+
 ## Experiment 32 — The concurrency cap is not a lever, and 2025 is significantly negative (July 2026)
 
 Five cells, ~100 min. `MAX_CONCURRENT_POSITIONS = 3` had never been varied — zero
