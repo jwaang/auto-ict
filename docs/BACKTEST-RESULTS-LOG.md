@@ -108,24 +108,41 @@ measured on one ruler.
 ### The +1.2 direction component does not survive
 
 Experiment 26 recorded a +1.2 win-rate-point direction edge and called it the
-first positive component measured anywhere in the program. On the clean
-baseline, scored against a matched paired null at the strategy's own bars:
+first positive component measured anywhere in the program.
 
-| run | barrier n | WR | paired null | edge | z |
-|---|---|---|---|---|---|
-| experiment 26, as published | 764 | 34.16 | 33.00 | **+1.2** | +0.68 |
-| pre-fix trades, rescored here | 760 | 33.03 | 33.52 | −0.5 | −0.29 |
-| **post-fix trades** | **729** | **33.33** | **34.27** | **−0.9** | **−0.53** |
+A single paired null is one draw. At 6000 draws its win rate carries about 0.7
+points of noise, which is most of the effect being argued about, so the first
+version of this entry drew a conclusion from one seed and could not support it.
+Thirty seeds on each baseline, same geometry, same cutoff:
 
-The strategy's barrier win rate fell 0.83 points when the faults were fixed,
-from 261 winners in 764 to 243 in 729. That is the direct arithmetic of the
-holiday carries: 14 of the 24 were TP hits that a correctly-closed position
-would never have reached.
+| baseline | barrier n | strategy WR | null mean | **edge** | sd | range | P(edge > 0) |
+|---|---|---|---|---|---|---|---|
+| pre-fix | 764 | 34.16 | 33.55 | **+0.61** | 0.66 | −0.9 to +1.7 | 80% |
+| post-fix | 729 | 33.33 | 33.55 | **−0.22** | 0.72 | −1.6 to +1.3 | 37% |
 
-Read it carefully. All three rows are statistically indistinguishable from zero,
-so the honest claim is not "direction skill is negative" — it is that **the one
-positive number this program ever produced does not reproduce** once the rule
-violations are removed. Nothing positive has now been measured anywhere.
+Two things fall straight out of that.
+
+**The null does not move.** 33.55 on both baselines, because the null was always
+resolved by `Intrabar.first_touch`, which was never the broken component. The
+whole change is on the strategy side: its win rate fell 0.83 points, from 261
+winners in 764 to 243 in 729, and the edge fell by the same 0.83. That is the
+arithmetic of the holiday carries — 14 of the 24 were TP hits a correctly-closed
+position never reaches.
+
+**The published +1.2 sits inside the pre-fix seed range.** It was a high draw
+from a distribution centred on +0.61, not a separate measurement. So the honest
+statement is narrower than "the +1.2 was a bug":
+
+- Under a matched paired null the pre-fix edge is **+0.61 ± 0.66**, not +1.2.
+  The published figure came from one favourable seed.
+- Fixing the cutoff moves the same measurement to **−0.22 ± 0.72**, and that
+  −0.83 shift is attributable to the fix, because the null is unchanged.
+- Neither figure is distinguishable from zero, and the bar is +3.5.
+
+What is established is therefore that **no positive direction edge survives**,
+and that the number previously treated as positive evidence was one seed above a
+mean that was already inside noise. It is not established that direction skill
+is negative.
 
 ### The stop-width result survives on clean data
 
@@ -146,10 +163,31 @@ Same flat noisy line, max |z| 0.83, mean net R negative at every width. The
 of experiment 27 is now +1.1, which is what a best-of-twelve artifact does when
 the data underneath it moves.
 
+### Two things this entry does not establish
+
+Recorded because the first draft claimed both, and a Codex review of the writeup
+was right to reject them.
+
+**That the fix caused a sign flip.** The pre-fix trades rescored with the same
+script already averaged +0.61, not +1.2. The fix moved it to −0.22. Both sit
+inside noise, so what moved is a mean, not a sign.
+
+**That the terminal bar is handled correctly.** `session_cutoff_masks` marks the
+last bar of any series as a session close, so a run that ends mid-session labels
+its final exit `SESSION_END` rather than something like `BACKTEST_END`. It is
+cosmetic here — one trade at the end of the span — but it is wrong, and the
+test at `tests/test_session_cutoff.py` currently locks the behaviour in.
+
+One test gap is also open. The ten isolation tests would all still pass if a
+future refactor moved the force-close below the `step_bars` skip in
+`_run_backtest_inner`, at which point `step_bars > 1` could skip a close bar and
+carry a position again. Nothing in `tests/` calls `run_backtest` at all, so the
+loop's ordering has no coverage.
+
 ### What is now established
 
-1. **Nothing positive has been measured in this program.** The last positive
-   figure was a consequence of two faults in the day-trade cutoff.
+1. **No positive direction edge survives.** −0.22 ± 0.72 over thirty seeds
+   against a bar of +3.5.
 2. **The strategy and its benchmark now resolve identically** on all 807 trades,
    so future edge figures are comparisons of skill rather than of rulers.
 3. **Costs are 11.4 times gross.** $57,143.75 against +$5,030.50.

@@ -73,6 +73,37 @@ class TestHolidayAndHalfDay:
         assert list(close) == [False, True]
 
 
+class TestDaylightSaving:
+    """The cutoff follows ET wall-clock, so it must survive both transitions.
+
+    `session_day` does its arithmetic on naive ET precisely because absolute-time
+    arithmetic drags Sunday-evening bars onto Saturday at every spring-forward.
+    The cutoff is built on top of it and inherits that requirement.
+    """
+
+    def test_spring_forward(self):
+        ts = bars(["2024-03-08 16:00", "2024-03-10 18:15", "2024-03-11 09:30",
+                   "2024-03-11 16:00", "2024-03-11 16:15"])
+        after, close = session_cutoff_masks(ts)
+        assert list(close) == [True, False, False, True, False]
+        assert list(after) == [True, False, False, True, True]
+
+    def test_fall_back(self):
+        ts = bars(["2024-11-01 16:00", "2024-11-03 18:15", "2024-11-04 09:30",
+                   "2024-11-04 16:00"])
+        after, close = session_cutoff_masks(ts)
+        assert list(close) == [True, False, False, True]
+        assert list(after) == [True, False, False, True]
+
+    def test_consecutive_closures(self):
+        """Christmas Eve is a half day and Christmas Day is shut."""
+        ts = bars(["2024-12-24 12:00", "2024-12-24 13:00",
+                   "2024-12-26 09:30", "2024-12-26 16:00"])
+        after, close = session_cutoff_masks(ts)
+        assert list(close) == [False, True, False, True]
+        assert not after[:3].any()
+
+
 class TestEntryGuard:
     @pytest.mark.parametrize("minute", ["00", "15", "30", "45"])
     def test_no_entry_anywhere_in_the_cutoff_hour(self, minute):

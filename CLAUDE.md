@@ -275,11 +275,15 @@ entries in the cutoff hour to zero, cross-session holds to zero, longest hold to
 `Intrabar.first_touch` now resolve **all 807 trades identically**, against 40
 disagreements before, so strategy and benchmark finally share one ruler.
 
-On that clean baseline the direction edge is **−0.9 points (z −0.53)**, against
-the +1.2 that experiment 26 published. All of these are indistinguishable from
-zero, so the claim is not that direction skill is negative — it is that **the
-only positive number this program ever produced does not reproduce.** Costs are
-now 11.4x gross.
+On the direction edge, measure across seeds and not on one. A 6000-draw paired
+null carries about 0.7 win-rate points of noise, which is most of the effect
+being argued about. Over thirty seeds the pre-fix edge is **+0.61 ± 0.66** and
+the post-fix edge is **−0.22 ± 0.72**, with the null unchanged at 33.55 on both
+because the null was always resolved by `Intrabar.first_touch` and only the
+engine was broken. Experiment 26's published +1.2 sits inside the pre-fix range
+and was one favourable seed. So no positive direction edge survives, the fix
+accounts for a −0.83 shift, and nothing here shows direction skill is negative.
+Costs are now 11.4x gross.
 
 Do not anchor a session rule on the session-day rollover: after 17:00 ET the
 next bar is the 18:00 evening open, which belongs to the next session day, so
