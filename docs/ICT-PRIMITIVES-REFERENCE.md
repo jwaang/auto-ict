@@ -61,6 +61,16 @@ keeps going. An entry model waiting for the retracement and then trading the
 continuation is relying on the half that does not work to pay for the half that
 does.
 
+**Strength tiers do not rescue it.** Split into weak / quietly strong /
+exceptional (the middle candle must be a detected displacement, or 72% land in
+the top tier), no tier reacts positively at adequate power: on 1-minute bars the
+exceptional tier is −0.08 at h=1 on n=5,241. A +3.22 seen at n=1,197 did not
+replicate.
+
+Two tier effects *do* replicate. **Weak gaps are traps** — −1.81 at h=1, z −3.89,
+n=25,722, so the advice to discard them is correct. And **the magnet strengthens
+with tier** (+3.93 / +6.00 / +6.37), so a stronger imbalance pulls harder.
+
 **Not a claim:** that price rises after a bullish FVG forms. Measured flat, and
 irrelevant.
 

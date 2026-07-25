@@ -81,7 +81,61 @@ Last updated: July 2026.
 
 ---
 
-## Experiment 38 — FVG strength tiers, and the first ICT claim to survive (July 2026)
+## Experiment 39 — The exceptional-tier reaction does not replicate (July 2026)
+
+Experiment 38 reported the tier reaction ordering as −3.07, −0.35, +3.22 and
+called it the first ICT claim to be confirmed rather than refuted, while flagging
+that the top tier was n=1,197 at z +1.55 and needed power. **The power test says
+no.**
+
+Same measurement on 1-minute bars over the same span, 214,792 gaps against
+43,536, giving the exceptional tier 5,985 detections instead of 1,402:
+
+| tier | n (reaction) | h=1 | h=4 | h=12 |
+|---|---|---|---|---|
+| weak | 25,722 | **−1.81** (z −3.89) | **−1.77** (z −3.91) | −1.01 |
+| quietly strong | 165,648 | −0.22 | **−0.93** (z −4.87) | **−0.67** (z −3.65) |
+| **exceptional** | **5,241** | **−0.08** | −0.31 | −1.05 |
+
+**+3.22 became −0.08 with 4.4 times the samples.** It was a small-sample
+artifact. The retraction is the result: experiment 38's headline does not stand,
+and no tier shows a positive reaction at adequate power.
+
+### What does replicate
+
+**Weak FVGs are traps, and now significantly so.** −1.81 at one bar and −1.77 at
+four, both z about −3.9 on n=25,722. The source's advice to discard them is
+correct. It is advice about what to avoid, not something to trade.
+
+**The magnet strengthens with tier**, on both timeframes:
+
+| tier | magnet 5m | magnet 1m |
+|---|---|---|
+| weak | +4.36 | +3.93 (z 13.17) |
+| quietly strong | +4.16 | +6.00 (z 26.76) |
+| exceptional | +5.35 | **+6.37** (z 9.08) |
+
+A stronger imbalance pulls harder, and exceptional is strongest at both
+resolutions. That is a genuine, replicated, correctly-ordered effect — and it is
+still a claim about where price goes, not about expectancy.
+
+### The lesson, again
+
+Experiment 32 selected the best of a three-cell cap curve and it reversed out of
+sample. Experiment 38 read two positive cells out of nine at n=1,197 and they
+reversed under power. Both were flagged as underpowered when published and both
+went the way the flag suggested.
+
+The rule that keeps being re-learned: **an underpowered positive is not a weak
+positive, it is an unknown.** Report it as unknown.
+
+---
+
+## Experiment 38 — FVG strength tiers (superseded by experiment 39) (July 2026)
+
+> **The headline of this entry was retracted.** The exceptional-tier reaction of
+> +3.22 did not replicate at higher power — see experiment 39, where it is −0.08
+> on 4.4x the samples. The tier *magnet* ordering below does replicate.
 
 Experiments 36 and 37 pooled all 43,536 gaps. The source separates them into
 three mechanical tiers and says weak ones are traps to discard while exceptional
