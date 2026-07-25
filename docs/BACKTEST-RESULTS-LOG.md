@@ -81,6 +81,91 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 34 — Two real findings: the FVG magnet holds, and sweeps predict the opposite of what ICT says (July 2026)
+
+The first properly-controlled positive results in this program, on 5-minute ES
+over 2021-07-25 to 2024-12-31. One sample per detection rather than per trade,
+so n runs to tens of thousands and the instrument is finally sharper than the
+effect. Day-block bootstrap intervals throughout.
+
+### The FVG magnet claim holds
+
+ICT says price returns to an imbalance to rebalance. Tested against a control of
+identical width and identical signed offset from price, anchored at a random
+other bar, so geometry is held constant and only the imbalance is tested.
+
+| | fill rate within 96 bars |
+|---|---|
+| real FVGs | **92.88%** |
+| matched control | 90.35% |
+| **paired difference** | **+2.53 points, CI [+2.06, +3.01], z +10.32** |
+
+n=43,519 over 1,069 days, median time to fill 1 bar. The paired statistic is the
+right one — real and control are matched per gap, so comparing two separate
+intervals is cruder.
+
+At 15m the same test gives +0.54 with overlapping intervals on n=15,584, so the
+effect is resolution-dependent and only clear at fine granularity.
+
+**This does not make the FVG tradeable.** A 93% fill rate against a 90% control
+is a statement about where price goes, not about making money net of costs, and
+"price returns to the gap" is exactly what a limit entry at the gap needs — it
+says the entry gets filled, not that it wins.
+
+### Liquidity sweeps predict continuation, not reversal
+
+The reference calls the sweep "the single most important pre-condition for an
+ICT entry" and expects reversal after it. Measured over 12,413 sweeps:
+
+| horizon | reversal rate | edge | z | half 1 / half 2 |
+|---|---|---|---|---|
+| 1 bar (5 min) | 44.72% | **−5.28** | **−11.68** | −4.19 / −6.37 |
+| 2 | 46.10% | −3.90 | −7.72 | −2.95 / −4.86 |
+| 3 | 46.46% | −3.54 | −6.92 | −2.66 / −4.42 |
+| 4 | 47.07% | −2.93 | −5.64 | −2.14 / −3.71 |
+| 6 (30 min) | 46.95% | −3.05 | −5.27 | −2.21 / −3.89 |
+| 12 | 48.76% | −1.24 | −2.00 | −0.64 / −1.84 |
+| 24 | 49.84% | −0.16 | −0.24 | −0.26 / −0.06 |
+| 48 | 50.40% | +0.40 | +0.60 | +0.20 / +0.60 |
+
+**The sign is the finding.** A reversal rate of 44.72% means continuation happens
+55.28% of the time. After price wicks above a prior high and closes back below
+it — a failed breakout, ICT's canonical sell trigger — price goes **up** 55% of
+the time over the next five minutes.
+
+Four things make this hard to dismiss: z −11.68 at the shortest horizon, monotone
+decay to nothing by 24 bars, both time halves agreeing in sign and rough
+magnitude at every horizon, and a balanced 47.5% bullish split so it is not the
+index drift.
+
+It also explains why 15m saw nothing: its shortest tested horizon is 60 minutes,
+already past the decay.
+
+### What is not yet established
+
+**That any of this is tradeable.** These are close-to-close direction counts with
+no barriers, no costs and no position sizing. A rough check says the edge is
+probably too small: +5.28 points at a five-minute horizon over a typical ~3-point
+range is about +0.3 points of expectancy gross, against 1.02 points of round-turn
+cost. At 30 minutes it is roughly +0.5 against the same 1.02.
+
+So the honest statement is that **a real directional signal exists and points the
+opposite way to the methodology built on it**, and that the same cost wall which
+closed every earlier experiment still stands in front of it. The next test is
+whether any geometry converts a 55/45 five-minute edge into positive expectancy
+after costs.
+
+### Method note
+
+The paired difference matters. An earlier version compared two separate
+confidence intervals and an even earlier one used a control mirrored to the
+opposite side of price, which confounded the test with trend and showed FVGs
+filling *less* than control. Holding the side constant and shuffling only the
+time changed −0.91 to −0.18 on the smoke sample, and the paired statistic at
+full scale gives +2.53.
+
+---
+
 ## Correction — the primitive test asked a question ICT does not make (July 2026)
 
 The commit that added `research/primitive_information.py` recorded "the FVG

@@ -123,13 +123,20 @@ for f in fvgs:
 dd = np.array(dd)
 results["fvg_fill_real"] = block_ci(hit_real, dd)
 results["fvg_fill_mirror_control"] = block_ci(hit_ctrl, dd)
+# Real and control are paired per gap, so the difference needs its own
+# interval — comparing two separate intervals is a weaker, cruder test.
+paired = np.asarray(hit_real, dtype=float) - np.asarray(hit_ctrl, dtype=float)
+results["fvg_fill_paired_diff"] = block_ci(paired + 0.0, dd)
 r, c = results["fvg_fill_real"], results["fvg_fill_mirror_control"]
 print(f"\nMAGNET  FVG fill within {LOOKAHEAD} bars")
 print(f"  real     {r['rate']:.2f}%  ci [{r['ci'][0]:.2f},{r['ci'][1]:.2f}]  n={r['n']} ({r['n_days']}d)")
 print(f"  mirrored {c['rate']:.2f}%  ci [{c['ci'][0]:.2f},{c['ci'][1]:.2f}]")
 diff = r["rate"] - c["rate"]
+pd_ = results["fvg_fill_paired_diff"]
 print(f"  difference {diff:+.2f} points   median bars to fill "
       f"{int(np.median(bars_to_fill)) if bars_to_fill else 0}")
+print(f"  paired diff {pd_['rate']:+.2f} ci [{pd_['ci'][0]:+.2f},{pd_['ci'][1]:+.2f}] "
+      f"z {pd_['rate']/pd_['sd'] if pd_['sd']>0 else float('nan'):+.2f}")
 
 # ---------------------------------------------------------------------------
 # SWEEP: the one directional claim. Wick through a prior extreme, close back.
@@ -154,7 +161,7 @@ for i in range(n_bars):
         sweeps.append((i, "bullish"))
 
 print(f"\nSWEEP   {len(sweeps)} sweeps detected")
-for h in (4, 12, 24, 48):
+for h in (1, 2, 3, 4, 6, 12, 24, 48):
     ok = [(i, d) for i, d in sweeps if i + h < n_bars]
     if len(ok) < 50:
         continue
@@ -167,9 +174,15 @@ for h in (4, 12, 24, 48):
     z = edge / b["sd"] if b["sd"] > 0 else float("nan")
     results[f"sweep_reversal_h{h}"] = {**b, "edge": edge, "z_block": z}
     flag = "***" if abs(z) > 3 and b["n"] >= 5000 else ""
+    # Split by time: a real effect should appear in both halves.
+    mid = len(idx) // 2
+    h1 = hit[:mid].mean() * 100 - 50
+    h2 = hit[mid:].mean() * 100 - 50
+    results[f"sweep_reversal_h{h}"]["half1"] = h1
+    results[f"sweep_reversal_h{h}"]["half2"] = h2
     print(f"  h={h:<3} n={b['n']:>6} ({b['n_days']:>4}d) rate {b['rate']:.2f}% "
           f"edge {edge:+.2f} z {z:+.2f} ci [{b['ci'][0]-50:+.2f},{b['ci'][1]-50:+.2f}] "
-          f"bull% {bull.mean()*100:.1f} {flag}", flush=True)
+          f"halves {h1:+.2f}/{h2:+.2f} bull% {bull.mean()*100:.1f} {flag}", flush=True)
 
 Path(OUT).parent.mkdir(parents=True, exist_ok=True)
 json.dump(results, open(OUT, "w"), indent=2, default=float)
