@@ -115,3 +115,63 @@ class TestGeometryFromTrades:
         ]
         stops, _ = geometry_from_trades(trades)
         assert len(stops) == 0
+
+
+class TestPairedNull:
+    """The paired null reuses a trade's own bar and geometry and randomises only
+    direction, so entry-time censoring is matched exactly rather than averaged
+    over the session."""
+
+    @staticmethod
+    def _trades(times, stop=10.0, mult=2.0, entry=5000.0):
+        return [{
+            "status": "CLOSED", "entry_time": t, "entry_price": entry,
+            "stop_loss": entry - stop, "take_profit": entry + stop * mult,
+        } for t in times]
+
+    def test_extracts_index_aligned_triples(self):
+        from backtest.nullmodel import paired_geometry_from_trades
+        times, stops, mults = paired_geometry_from_trades(
+            self._trades(["2024-06-03 14:00+00:00", "2024-06-04 15:00+00:00"]))
+        assert len(times) == len(stops) == len(mults) == 2
+        assert stops.tolist() == [10.0, 10.0]
+        assert mults.tolist() == [2.0, 2.0]
+
+    def test_naive_timestamps_are_treated_as_utc(self):
+        from backtest.nullmodel import paired_geometry_from_trades
+        times, _, _ = paired_geometry_from_trades(self._trades(["2024-06-03 14:00"]))
+        assert str(times.tz) == "UTC"
+
+    def test_skips_trades_without_an_entry_time(self):
+        from backtest.nullmodel import paired_geometry_from_trades
+        trades = self._trades(["2024-06-03 14:00+00:00"])
+        trades.append({"status": "CLOSED", "entry_price": 5000.0,
+                       "stop_loss": 4990.0, "take_profit": 5020.0})
+        times, _, _ = paired_geometry_from_trades(trades)
+        assert len(times) == 1
+
+    def test_paired_mode_uses_each_draw_own_geometry(self):
+        """Two trades with different stops must both appear, not an average."""
+        df = _walk(4000, start="2024-06-03 00:00")
+        times = pd.DatetimeIndex(["2024-06-03 14:00+00:00", "2024-06-03 15:00+00:00"])
+        got = run_null_model(df, times, np.array([4.0, 40.0]),
+                             np.array([2.0, 2.0]), n=400, seed=5, paired=True)
+        assert got["median_stop_pts"] in (4.0, 40.0, 22.0)
+        assert got["null_barrier_n"] > 0
+
+    def test_paired_mode_requires_aligned_arrays(self):
+        df = _walk(1000, start="2024-06-03 00:00")
+        with pytest.raises(ValueError, match="index-aligned"):
+            run_null_model(df, pd.DatetimeIndex(["2024-06-03 14:00+00:00"]),
+                           np.array([10.0, 20.0]), np.array([2.0, 2.0]),
+                           n=10, paired=True)
+
+    def test_paired_mode_keeps_the_final_session(self):
+        """Unpaired sampling drops the last day for want of resolution time.
+        Paired draws are real trades, so dropping them would bias the null."""
+        df = _walk(4000, start="2024-06-03 00:00")
+        times = pd.DatetimeIndex(["2024-06-03 14:00+00:00"] * 3)
+        got = run_null_model(df, times, np.array([5.0] * 3), np.array([2.0] * 3),
+                             n=100, seed=6, paired=True)
+        assert got["null_n"] == 100
+        assert got["null_missing_n"] == 0

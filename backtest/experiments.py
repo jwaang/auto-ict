@@ -190,7 +190,11 @@ def _null_benchmark(df_1m, result, cell: dict, draws: int = 6000) -> dict:
     second, so there is no reason to keep guessing.
     """
     from data.historical import resample_ohlcv
-    from backtest.nullmodel import geometry_from_trades, run_null_model
+    from backtest.nullmodel import (
+        geometry_from_trades,
+        paired_geometry_from_trades,
+        run_null_model,
+    )
 
     stops, mults = geometry_from_trades(result.trades)
     if len(stops) == 0:
@@ -206,11 +210,28 @@ def _null_benchmark(df_1m, result, cell: dict, draws: int = 6000) -> dict:
                          n=draws, seed=abs(hash(cell.get("label", ""))) % 2**31)
     null_rate = out.get("null_win_rate")
     barrier = _geometry(result.trades)
-    if null_rate is not None and barrier.get("barrier_n"):
-        wins = round(barrier["barrier_win_rate"] / 100 * barrier["barrier_n"])
-        edge = _edge(int(wins), barrier["barrier_n"], null_rate / 100)
+    wins = None
+    if barrier.get("barrier_n"):
+        wins = int(round(barrier["barrier_win_rate"] / 100 * barrier["barrier_n"]))
+    if null_rate is not None and wins is not None:
+        edge = _edge(wins, barrier["barrier_n"], null_rate / 100)
         out["edge_vs_null"] = edge.get("barrier_edge")
         out["z_vs_null"] = edge.get("barrier_z")
+
+    # The paired null reuses each trade's own bar and geometry and randomises
+    # only direction, so censoring is matched exactly. Comparing the two splits
+    # the result into timing skill and direction skill.
+    times, pstops, pmults = paired_geometry_from_trades(result.trades)
+    if len(times):
+        pair = run_null_model(span, times, pstops, pmults, n=draws,
+                              seed=abs(hash(cell.get("label", "") + "paired")) % 2**31,
+                              paired=True)
+        out["paired_null_win_rate"] = pair.get("null_win_rate")
+        out["paired_null_censored_pct"] = pair.get("null_censored_pct")
+        if pair.get("null_win_rate") is not None and wins is not None:
+            edge = _edge(wins, barrier["barrier_n"], pair["null_win_rate"] / 100)
+            out["edge_vs_paired_null"] = edge.get("barrier_edge")
+            out["z_vs_paired_null"] = edge.get("barrier_z")
     return out
 
 

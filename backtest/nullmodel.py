@@ -51,6 +51,7 @@ def run_null_model(
     target_multiples: np.ndarray,
     n: int = 5000,
     seed: int = 0,
+    paired: bool = False,
 ) -> dict:
     """Resolve `n` random entries and report how often the target came first.
 
@@ -63,6 +64,19 @@ def run_null_model(
             sampled from the real run.
         n: Number of random entries.
         seed: Fixed so a null is reproducible and cannot be re-rolled.
+        paired: When True the three arrays are index-aligned — one real trade per
+            position — and a draw takes a trade's own bar, stop and target and
+            randomises only the **direction**.
+
+            The unpaired form samples entry times across every bar, which tests
+            entry timing and direction together. But it leaves a confound: if a
+            strategy's entries cluster at a particular hour they get a particular
+            amount of time before the 16:00 cutoff, while a uniform null gets the
+            session average. Different censoring means the two are not comparable.
+            The paired form removes that entirely — same bar, same geometry — so
+            what it measures is whether the bias rule knows which way to go.
+            Run both and the result decomposes into timing skill and direction
+            skill.
 
     Returns:
         Barrier count and win rate for the random entries, the number censored
@@ -70,20 +84,28 @@ def run_null_model(
     """
     if len(entry_times) == 0 or len(stop_points) == 0:
         return {}
+    if paired and not (len(entry_times) == len(stop_points) == len(target_multiples)):
+        raise ValueError("paired mode needs entry_times, stop_points and "
+                         "target_multiples index-aligned")
 
     rng = np.random.default_rng(seed)
     intrabar = Intrabar(minute_df)
     closes = minute_df.set_index("timestamp")["close"]
 
-    # Entries in the final session have no room to resolve before the cutoff.
-    eligible = entry_times[entry_times < entry_times[-1].normalize()]
-    if len(eligible) == 0:
+    if paired:
+        picks = rng.integers(0, len(entry_times), size=n)
         eligible = entry_times
-
-    picks = rng.integers(0, len(eligible), size=n)
+        stops = np.asarray(stop_points)[picks]
+        mults = np.asarray(target_multiples)[picks]
+    else:
+        # Entries in the final session have no room to resolve before the cutoff.
+        eligible = entry_times[entry_times < entry_times[-1].normalize()]
+        if len(eligible) == 0:
+            eligible = entry_times
+        picks = rng.integers(0, len(eligible), size=n)
+        stops = rng.choice(stop_points, size=n, replace=True)
+        mults = rng.choice(target_multiples, size=n, replace=True)
     dirs = np.where(rng.random(n) < 0.5, "LONG", "SHORT")
-    stops = rng.choice(stop_points, size=n, replace=True)
-    mults = rng.choice(target_multiples, size=n, replace=True)
 
     tp = sl = censored = missing = 0
     for k in range(n):
@@ -122,6 +144,32 @@ def run_null_model(
         "median_stop_pts": round(float(np.median(stops)), 2),
         "median_target_mult": round(float(np.median(mults)), 2),
     }
+
+
+def paired_geometry_from_trades(
+    trades: list[dict],
+) -> tuple[pd.DatetimeIndex, np.ndarray, np.ndarray]:
+    """Entry bar, stop distance and target multiple for each real trade.
+
+    Index-aligned for `run_null_model(..., paired=True)`, so a draw reuses a
+    trade's own moment and geometry and randomises only its direction.
+    """
+    times, stops, mults = [], [], []
+    for t in trades:
+        if t.get("status") != "CLOSED" or not t.get("entry_time"):
+            continue
+        risk = abs(t["entry_price"] - t["stop_loss"])
+        reward = abs(t["take_profit"] - t["entry_price"])
+        if risk > 0 and reward > 0:
+            times.append(pd.Timestamp(t["entry_time"]))
+            stops.append(risk)
+            mults.append(reward / risk)
+    if not times:
+        return pd.DatetimeIndex([]), np.asarray([]), np.asarray([])
+    idx = pd.DatetimeIndex(times)
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    return idx, np.asarray(stops), np.asarray(mults)
 
 
 def geometry_from_trades(trades: list[dict]) -> tuple[np.ndarray, np.ndarray]:
