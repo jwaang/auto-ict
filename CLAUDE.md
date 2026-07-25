@@ -329,8 +329,22 @@ sampling error on 72 barrier trades is 5.6, so the interval is about ±11 and z 
 +0.66. **Never read `P(edge > 0)` across seeds as significance** — it answers a
 different question from the one that matters.
 
-What remains is not a sweep: a different instrument or a different data source
-such as order flow.
+**The exit is not the problem either.** `TRADE_MANAGEMENT_ENABLED` had been
+False for all 68 configurations and appeared zero times in the experiment log,
+and it was bound at import time so it was never sweepable — now routed through
+`params.get("trade_management", ...)`. Managed exits change the payoff
+functional, so barrier scoring and the paired null do not apply; the statistic is
+the per-trade paired delta in net R on identical entries. Result: **+0.0114R,
+95% bootstrap [−0.0419, +0.0632]**, median exactly zero, 73.7% of trades
+unchanged. Mean R is −0.1044, so break-even needs about +0.10R and management
+supplies a tenth of it. See experiment 31.
+
+Two things worth carrying forward from it. A partial close does **not** add cost
+in this model — total closed quantity is 100% either way, spread and slippage are
+charged on quantity filled, and commission is per contract not per ticket. And
+the **three-position concurrency cap has now shaped three separate results**
+(experiments 29, 30 and 31); it has never been varied, so it is the next thing to
+test.
 
 ## Confluence Scoring (0-100)
 

@@ -81,6 +81,89 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 31 — The exit is not the problem either (July 2026)
+
+One cell, 20.4 min. `TRADE_MANAGEMENT_ENABLED` had been `False` for all 68
+configurations and appeared **zero times** in `logs/experiments.jsonl`. It was
+also bound at import time in `trading/positions.py`, so it was never sweepable —
+the exact trap the harness notes warn about. Now routed through `params.get()`.
+
+### Why it needed a different test statistic
+
+Partial closes and trailing stops change the payoff functional, so the barrier
+win rate, `_geometry` and every paired random-direction null in this repo stop
+applying: there is no single stop/target pair left to score. The question is
+instead whether a managed exit beats an unmanaged one **on the same entry**, so
+the statistic is the per-trade paired delta in net R with a bootstrap interval.
+Registered before the run: `mean(d) > +0.03R` with the interval clear of zero is
+a real result; 0 to +0.01R is noise.
+
+### It is neutral
+
+| | unmanaged | managed |
+|---|---|---|
+| trades | 807 | 922 |
+| gross | +$5,030 | +$14,693 |
+| costs | $57,144 | $67,804 |
+| net | −$52,113 | −$53,599 |
+| mean R per trade | −0.1044 | −0.0894 |
+
+Paired on 764 entries with identical bar and direction:
+
+| statistic | value |
+|---|---|
+| mean delta | **+0.0114 R** |
+| 95% bootstrap | **[−0.0419, +0.0632]** |
+| median delta | 0.0000 R |
+| paired t | +0.42 |
+| improved / worsened / unchanged | 14.9% / 11.4% / **73.7%** |
+
+**Three-quarters of trades are untouched**, because management only engages on
+the minority that reach 1R — which is what experiment 21 already implied with a
+median MFE of 0.70R against a 1.59R target and only 24.5% of trades ever
+reaching target. A 1R partial harvests a minority event and clips the trades
+that were the only source of positive payoff.
+
+The framing that closes the question: mean R is **−0.1044**, so break-even needs
+about **+0.10R**. Trade management supplies **+0.011R ± 0.05**, roughly a tenth
+of the gap, with an interval that contains zero.
+
+### Two predictions were wrong, and one cost model was
+
+Both this author and Codex pre-registered that management would make results
+*worse*. It came out marginally positive per trade. Both were wrong in sign and
+both were inside noise, which is the honest description.
+
+The reasoning that produced the wrong prediction is worth recording. The claim
+was that a partial close "adds a fill, so adds cost". It does not: total closed
+quantity is 100% either way, spread and slippage are charged on quantity filled,
+and commission is per contract rather than per ticket. There is no incremental
+market cost to splitting an exit in this model. Codex caught that before the run
+rather than after.
+
+Costs did rise, from $57,144 to $67,804, but through **more trades** (922 against
+807), not more expensive ones — cost per trade barely moved, $70.81 to $73.54.
+
+### Displacement, for the third time
+
+158 entries exist only in the managed run and 43 only in the unmanaged one,
+because a managed position releases its concurrency slot sooner. The
+three-position cap has now shaped three separate results: it crowded out FVG+OB
+overlaps in experiment 29, it bounds trade count at every timeframe in
+experiment 30, and it admits 158 extra trades here.
+
+**That makes the cap itself the next thing to test.** It has never been varied.
+
+### What is now established
+
+1. **The exit is not the problem.** Changing the exit rule moves expectancy by
+   +0.011R against a ~0.10R gap, with a bootstrap interval containing zero.
+2. **The "maybe the exit is the problem" objection is closed** without spending
+   the holdout or changing instrument.
+3. **69 configurations.**
+
+---
+
 ## Experiment 30 — Costs fall with the timeframe and it changes nothing (July 2026)
 
 Two cells, 19 min. The `timeframes` sweep had never actually been run — no `tf:`

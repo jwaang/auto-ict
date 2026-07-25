@@ -164,8 +164,15 @@ class PositionManager:
         high = candle["high"]
         low = candle["low"]
 
+        # Sweepable, because it was not: TRADE_MANAGEMENT_ENABLED binds at
+        # import time, so it stayed False for all 68 configurations recorded to
+        # date and the "maybe the exit is the problem" objection was never
+        # tested.
+        from backtest import params
+        managed = params.get("trade_management", TRADE_MANAGEMENT_ENABLED)
+
         for pos in self.get_open_positions():
-            if TRADE_MANAGEMENT_ENABLED and pos.original_stop_loss is not None:
+            if managed and pos.original_stop_loss is not None:
                 managed_fills = self._check_position_fill_managed(pos, high, low)
                 fills.extend(managed_fills)
             else:
