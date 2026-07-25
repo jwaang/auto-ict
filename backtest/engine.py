@@ -24,7 +24,7 @@ from config import (
     MIN_CONFLUENCE_SCORE,
     STARTING_BALANCE,
 )
-from data.historical import build_multi_timeframe, get_windowed_data
+from data.historical import build_multi_timeframe, get_windowed_data, session_day
 from ict.confluence import analyze_multi_timeframe
 from ict.killzones import is_crypto as _is_crypto_fn
 from ict.smc_adapter import set_swing_length_override
@@ -86,6 +86,37 @@ def _accumulate_costs(trade: dict, fill: dict):
     """
     for key in ("gross_pnl", "costs"):
         trade[key] = round((trade.get(key) or 0) + (fill.get(key) or 0), 2)
+
+
+def session_cutoff_masks(timestamps: pd.Series) -> tuple:
+    """Which bars are past the day-trade cutoff, and which one closes the day.
+
+    The cutoff is 16:00 ET on the bar's own CME session day. Returns two boolean
+    arrays: bars at or after the cutoff, which may not open a position, and the
+    last bar at or before it, which force-closes whatever is still open.
+
+    The close used to fire on any bar whose ET hour was 16. Databento omits
+    minutes with no trade, so on the 4.1% of weekday sessions that are US
+    holidays or half-days no such bar exists, and positions were carried into
+    later sessions — up to 119 hours, straight through Independence Day.
+    Picking the last bar at or before the cutoff works whether or not the
+    cutoff bar itself traded.
+
+    Reading the next bar's *timestamp* is not look-ahead: no price or volume is
+    taken from it. It stands in for the session calendar, which live trading
+    gets from a clock. Anchoring on the session-day rollover alone would be
+    wrong — after 17:00 ET the next bar is the 18:00 evening open, which belongs
+    to the next session day, so the close would land a full hour late on every
+    ordinary weekday.
+    """
+    bar_et = timestamps.dt.tz_convert(_ET).dt.tz_localize(None)
+    cutoff_et = session_day(timestamps) + pd.Timedelta(hours=_SESSION_END_HOUR)
+    next_et = bar_et.shift(-1)
+    after_cutoff = (bar_et >= cutoff_et).to_numpy()
+    at_session_close = (
+        (bar_et <= cutoff_et) & (next_et.isna() | (next_et > cutoff_et))
+    ).to_numpy()
+    return after_cutoff, at_session_close
 
 
 def _count(result: "BacktestResult", reason: str):
@@ -224,6 +255,8 @@ def _run_backtest_inner(
     # re-analyzing bias/swing/setup every step when their latest bar hasn't changed
     _analysis_cache = {}
 
+    _after_cutoff, _at_session_close = session_cutoff_masks(entry_bars["timestamp"])
+
     # Walk forward through entry bars
     for i in range(warmup_bars, len(entry_bars)):
         bar = entry_bars.iloc[i]
@@ -303,8 +336,7 @@ def _run_backtest_inner(
         # Force-close remaining non-crypto positions at session end (day trade only).
         # Runs AFTER SL/TP check so real fills take priority over synthetic close.
         if not _is_crypto_fn(ticker) and pm.get_open_count() > 0:
-            et_time = current_time.astimezone(_ET)
-            if _SESSION_END_HOUR <= et_time.hour < _SESSION_END_HOUR + 1:
+            if _at_session_close[i]:
                 for pos in pm.get_open_positions():
                     fill = pm.close_position_manual(pos.id, bar["close"], "SESSION_END")
                     if fill:
@@ -342,6 +374,15 @@ def _run_backtest_inner(
         if trade_end is not None and current_time > trade_end:
             if pm.get_open_count() == 0:
                 break
+            continue
+
+        # No new positions once the day-trade cutoff has passed. The force-close
+        # above runs before this, so an entry taken here would be liquidated on
+        # the next bar: 31 such trades in the 2021-24 baseline, 19 of them held
+        # exactly one bar for $974 of costs. This is a hard rule for non-crypto,
+        # not a strategy filter, so it does not belong behind ENFORCE_KILL_ZONES.
+        if not _is_crypto_fn(ticker) and _after_cutoff[i]:
+            _count(result, "after session cutoff")
             continue
 
         # Get point-in-time windowed data
