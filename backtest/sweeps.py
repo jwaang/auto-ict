@@ -217,6 +217,38 @@ def directions(span=SCREEN, bias: str = "no_pd_v2") -> list[dict]:
     ]
 
 
+def triggers(span=SCREEN, bias: str = "no_pd_v2") -> list[dict]:
+    """Does a causally clean trigger do better than the zone finders?
+
+    Research flagged FVG and CISD as the only ICT concepts that cannot read future
+    data. The current entry rests on order blocks, which are defined retroactively
+    ("the last down candle before the up move"), so any edge they show is suspect.
+    CISD reads closed bodies against an opening price known beforehand.
+
+    The zone finders put longs 15.5 points below their own benchmark. If CISD lands
+    materially better, the trigger was the problem. If it lands at its benchmark
+    too, the bias is what carries no information and no trigger will rescue it.
+    """
+    base = {**ICT_GEOMETRY, **BIAS_VARIANTS[bias]}
+    cells = [
+        _cell("trig:levels", base, span,
+              hypothesis="Control: the existing FVG/OB zone finders."),
+    ]
+    for age in (5, 10, 20):
+        cells.append(_cell(
+            f"trig:cisd_age{age}", {**base, "entry_trigger": "cisd", "cisd_max_age": age},
+            span,
+            hypothesis=f"CISD entry, actionable for {age} bars after the flip. Longer "
+                       f"windows trade more but enter further from the reference.",
+        ))
+    cells.append(_cell(
+        "trig:cisd_short_only",
+        {**base, "entry_trigger": "cisd", "allowed_directions": ("SHORT",)}, span,
+        hypothesis="CISD shorts only. Shorts were the less broken side under the "
+                   "zone finders, so this separates trigger from direction."))
+    return cells
+
+
 def smoke(span=None) -> list[dict]:
     """Two cells over one month — verifies the harness before a long run.
 
@@ -235,6 +267,7 @@ SWEEPS = {
     "smoke": smoke,
     "invert": invert,
     "directions": directions,
+    "triggers": triggers,
     "bias": bias_rules,
     "geometry": geometry,
     "swing": swing_lengths,

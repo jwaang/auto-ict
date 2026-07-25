@@ -117,6 +117,10 @@ def _analyze_smc(df: pd.DataFrame, label: str, atr: pd.Series) -> dict:
     from ict.ifvg import detect_ifvgs, get_active_ifvgs
     breaker_blocks = detect_breaker_blocks(obs, liquidity_zones)
     ifvgs = detect_ifvgs(fvgs)
+    # CISD is one of only two causally clean ICT concepts (the other being the
+    # FVG): it reads closed bodies against an opening price known beforehand.
+    from ict.cisd import detect_cisd
+    cisd_events = detect_cisd(df)
     atr_val = float(atr.iloc[-1]) if not pd.isna(atr.iloc[-1]) else 0
     active_breakers = get_active_breakers(breaker_blocks, current_price, atr_val) if atr_val else []
     active_ifvgs = get_active_ifvgs(ifvgs, current_price, atr_val) if atr_val else []
@@ -147,6 +151,7 @@ def _analyze_smc(df: pd.DataFrame, label: str, atr: pd.Series) -> dict:
         "breaker_blocks": breaker_blocks,
         "active_breakers": active_breakers,
         "ifvgs": ifvgs,
+        "cisd": cisd_events,
         "active_ifvgs": active_ifvgs,
         "po3": po3,
     }

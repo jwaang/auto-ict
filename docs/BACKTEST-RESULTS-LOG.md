@@ -40,6 +40,79 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 22 — CISD is a better trigger and a worse strategy (July 2026)
+
+Configurations tried to date: **45**. New module `ict/cisd.py`, 15 tests.
+
+### Why CISD
+
+Research flagged FVG and CISD as the only ICT concepts that are **causally clean**.
+Order blocks are defined retroactively — "the last down candle before the up move"
+reads future data — so any edge they show in a backtest is suspect however
+carefully it is written. CISD reads closed candle *bodies* against an opening price
+known before the signal bar opened: a run of down candles establishes a reference at
+the first candle's open, and delivery has flipped when a later candle closes through
+it. Wicks do not count.
+
+The current entry rests on order blocks, so this is the first trigger tested here
+that cannot cheat.
+
+### Result
+
+| Cell | n | WR | Coin-flip | Edge | z | Stop | Cost/R | Gross | Return |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| cisd_short_only | 817 | 26.9% | 28.8% | **-1.9** | **-1.20** | 5.2 | 19.7% | -$24.9k | -87.0% |
+| cisd_age20 | 798 | 25.4% | 29.6% | -4.2 | -2.60 | 4.6 | 22.2% | -$30.0k | -87.5% |
+| cisd_age10 | 815 | 25.8% | 30.1% | -4.3 | -2.68 | 5.2 | 19.7% | -$27.6k | -87.5% |
+| cisd_age5 | 768 | 25.7% | 30.5% | -4.8 | -2.89 | 5.3 | 19.4% | -$31.8k | -87.6% |
+| levels (control) | 310 | 28.4% | 37.1% | -8.7 | -3.17 | 9.3 | 11.0% | -$29.7k | -52.2% |
+
+**CISD is the better trigger and the worse strategy.** Its edge over benchmark is
+-1.9 to -4.8 against the zone finders' -8.7, and `cisd_short_only` at z = -1.20 is
+the closest anything has come to its own benchmark. But it fires 2.6x as often (800
+trades against 310) on stops half as wide (5 points against 9), so cost drag doubles
+to **19.7-22.2% of R** and the return goes from -52% to -87%.
+
+Gross P&L is negative on every arm, so this is not a costs-only story either.
+
+### The invariant that settles it
+
+Median favourable excursion is **0.70 to 0.74R in every single configuration
+tested** — both triggers, both directions, all six bias vote rules, normal and
+inverted. Target-reach rate sits at 22-24% throughout.
+
+That invariance is the finding. Whatever the entry triggers on, the median trade
+travels about 0.7R in its favour before resolving. An entry carrying real
+directional information would move that number. Nothing has.
+
+### Standing tally after four sweeps
+
+| | Best result |
+|---|---|
+| Bias vote rules (6) | -0.8 edge, z = -0.33 (inverted `no_pd_v2`) |
+| Direction isolation | -3.4 edge, z = -1.03 (shorts only) |
+| Entry triggers (2) | -1.9 edge, z = -1.20 (CISD shorts) |
+| **Anything above its own benchmark** | **none** |
+
+Forty-five configurations, nine bugs fixed, and the ceiling is "indistinguishable
+from random". With 45 trials a winner would need t > 3 to be credible, and nothing
+has cleared t = 0.
+
+### One untested thing ICT actually teaches
+
+Every run so far executes on 15m, which is ICT's *array* timeframe, not his
+execution timeframe. His documented day-trade ladder is 1H bias, 15m context, **5m
+execution**, and his stated method for improving R:R is to *shrink the stop by
+dropping timeframes while leaving the target unchanged*.
+
+That exact combination — a 5m structural stop against an unchanged HTF liquidity
+target — has never been tested here, and it is the one configuration where MFE in R
+terms could exceed target R rather than sitting at 0.7. The headwind is obvious and
+quantified: a 3-point stop puts cost drag at 34% of R. Worth one run to find out,
+and the answer is informative either way.
+
+---
+
 ## Experiment 21 — MFE/MAE on 1m: the target is unreachable, and a wider stop will not help (July 2026)
 
 Configurations tried to date: **40**. Excursion is pure measurement — the four

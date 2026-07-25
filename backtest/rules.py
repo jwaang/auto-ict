@@ -172,6 +172,30 @@ def _find_trade_levels(
     concepts = []
     setup_type = ""
 
+    # Trigger 0: CISD, when selected. Kept as its own path rather than another
+    # fallback because it answers a different question — the zone finders ask
+    # "is price near a level", CISD asks "has delivery just flipped". It is also
+    # the only trigger here that is causally clean by construction: order blocks
+    # are defined retroactively, so a mechanised backtest of them is suspect.
+    if params.get("entry_trigger", "levels") == "cisd":
+        from ict.cisd import latest_cisd
+        events = entry_data.get("cisd") or []
+        event = latest_cisd(
+            events, direction,
+            current_index=entry_data.get("candle_count", 0) - 1,
+            max_age=params.get("cisd_max_age", 10),
+        )
+        if event is None:
+            return None, None, None, "", []
+        buffer = atr * sl_mult
+        stop_loss = (event["run_extreme"] - buffer if direction == "LONG"
+                     else event["run_extreme"] + buffer)
+        take_profit = _find_take_profit(direction, current_price, stop_loss,
+                                        entry_data, setup_data)
+        if take_profit is None:
+            return None, None, None, "", []
+        return current_price, stop_loss, take_profit, "CISD", ["CISD"]
+
     # Strategy 1: FVG+OB overlap
     entry_price, stop_loss = _find_fvg_ob_overlap(direction, aligned_obs, aligned_fvgs, current_price, atr, sl_mult)
     if entry_price:
