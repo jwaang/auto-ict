@@ -40,6 +40,84 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 24 — Both ICT strategies were dead code (July 2026)
+
+Configurations tried to date: **56**.
+
+### Bug 10: a key-name mismatch meant neither ICT strategy could ever trade
+
+`strategies` had existed since the harness was built and had never been run. Running
+it gave **0 trades from `ict_2022` and 0 from `silver_bullet`** over all of 2023 —
+23,564 consecutive declines each. The rejection funnel said only "strategy declined",
+so I traced the exit points directly: bias was neutral on **2,065 of 2,065**
+kill-zone bars.
+
+The cause is a silent shape mismatch. `common.run_smc_detections` emits its own key
+names, and `get_htf_bias` hands those dicts straight to `determine_ict_bias`, which
+reads the confluence path's names:
+
+| `bias_factors` reads | strategy path provided |
+|---|---|
+| `previous_high_low` | `pdhl` |
+| `liquidity_zones` | `liquidity` |
+| `premium_discount` | **absent entirely** |
+
+Three of the four factors abstained on every bar, so bias was always neutral and
+both strategies returned None forever. Nothing failed loudly. Adding the canonical
+names alongside the old ones, and computing premium/discount, moved strategy-path
+bias from **0.0% to 24.7% directional**.
+
+A regression test now asserts `run_smc_detections` output is consumable by
+`bias_factors` and that at least one factor can vote.
+
+### With the fix, one strategy trades and it is still losing
+
+| Cell | Entry TF | n | WR | PF | Return |
+|---|---|---:|---:|---:|---:|
+| ict_2022 | 15m | 23 | 21.7% | 0.53 | -7.0% |
+| ict_2022 | 5m | 42 | 14.3% | 0.46 | -16.1% |
+| silver_bullet | 15m | **0** | — | — | — |
+| silver_bullet | 5m | **0** | — | — | — |
+| default (control) | 15m | 310 | 28.4% | 0.60 | -52.2% |
+
+23 and 42 trades are far too few to read a win rate — below even the 30-trade
+ranking floor. What can be said is that selectivity did not produce quality: the
+2022 model's win rate is *lower* than the unselective confluence path's.
+
+### Bug 11: Silver Bullet is over-constrained relative to the methodology
+
+Silver Bullet still produced zero at 5m, and the trace shows why: window bounds are
+found correctly (spans of 1-12 bars), bias fires, but **the sequence is never found
+inside the window** — 220 of 220 in-window directional bars fail there.
+
+The implementation requires the *entire* sweep-then-MSS-then-FVG chain to fall inside
+one one-hour window. With `swing_length = 5`, a CHoCH needs a swing to form, be
+confirmed, and then be broken — roughly 15+ bars. The window holds 4 bars at 15m and
+12 at 5m. So it is not selective, it is arithmetically impossible.
+
+Research describes the actual rule as the *first FVG formed inside the window*,
+aligned with HTF bias and an MSS — the FVG is the in-window requirement, not the
+whole chain. **The code is stricter than the doctrine it implements**, and that
+excess strictness is the difference between a rare setup and no setup.
+
+The fix is well-defined: require only the FVG inside the window and let the sweep and
+MSS precede it. Not yet applied.
+
+### Where this leaves the search
+
+Six sweeps, 56 configurations, eleven bugs. The two "concrete ICT strategies" that
+the README presents as the sophisticated path turn out to have been non-functional —
+one from a dict-shape mismatch, one from an impossible constraint. Neither has ever
+produced a testable sample.
+
+That changes the reading of the whole exercise slightly. The negative results so far
+are about the **confluence path**, which is genuinely well-tested at this point. The
+strategy path has never been tested at all, because it never ran. Fixing Silver
+Bullet's constraint and getting both to a readable sample size is the honest next
+step before drawing a conclusion about ICT on ES.
+
+---
+
 ## Experiment 23 — The 5m execution ladder backfires; the confluence score is noise (July 2026)
 
 Configurations tried to date: **48**.

@@ -169,11 +169,34 @@ def timeframes(span=SCREEN, bias: str = "no_pd_v2") -> list[dict]:
 
 
 def strategies(span=SCREEN, bias: str = "no_pd_v2") -> list[dict]:
-    """Confluence scoring versus the two concrete ICT models."""
-    base = {**BIAS_VARIANTS[bias], **ICT_GEOMETRY}
+    """The two concrete ICT models against the confluence path.
+
+    These are the last untested code path. They bypass `decide_trade` entirely and
+    require a temporal sequence — liquidity sweep, then market structure shift, then
+    FVG entry, in causal order — and they gate on kill zones. That makes them far
+    more selective than anything tested so far, and selectivity is the one remaining
+    avenue the evidence supports: fewer, better trades directly attack a cost drag
+    running 10-28% of R.
+
+    Deliberately NOT given ICT_GEOMETRY. The strategies carry their own hardcoded
+    _MIN_RR (3.0 for the 2022 model, 2.0 for Silver Bullet) and their own 3R
+    fallback in `common.find_take_profit`, and they read no params — so passing
+    geometry overrides would loosen only the engine-level risk veto while leaving
+    their internal gates untouched, which is a muddle rather than a test. They run
+    as designed; the bias fixes still reach them through `common.get_htf_bias`.
+    """
+    bias_only = BIAS_VARIANTS[bias]
     return [
-        _cell(f"strat:{name}", base, span, strategy=name)
-        for name in ("default", "ict_2022", "silver_bullet")
+        _cell("strat:default", {**bias_only, **ICT_GEOMETRY}, span, strategy="default",
+              hypothesis="Control: the confluence path with the geometry used "
+                         "throughout the other sweeps."),
+        _cell("strat:ict_2022", bias_only, span, strategy="ict_2022",
+              hypothesis="Sweep then MSS then FVG, kill-zone gated, internal 3:1 R:R "
+                         "floor. Should trade rarely; the question is whether "
+                         "selectivity buys quality."),
+        _cell("strat:silver_bullet", bias_only, span, strategy="silver_bullet",
+              hypothesis="Same sequence confined to three one-hour windows with a "
+                         "2:1 floor. The most selective configuration available."),
     ]
 
 
@@ -286,6 +309,30 @@ def execution_tf(span=SCREEN_H2, bias: str = "no_pd_v2") -> list[dict]:
     ]
 
 
+def strategies_5m(span=SCREEN_H2, bias: str = "no_pd_v2") -> list[dict]:
+    """The ICT strategies on an execution timeframe they can actually use.
+
+    Silver Bullet confines the entire sweep-then-MSS-then-FVG sequence to a single
+    one-hour window. At 15m that window holds **4 bars**, while the sequence needs
+    sweep_idx < choch_idx < fvg_idx and an FVG needs 3 closed candles — roughly 5-6
+    bars minimum. So Silver Bullet is not selective at 15m, it is **structurally
+    impossible**, which is why it produced exactly zero trades over a full year.
+
+    Research agrees: Silver Bullet is a 15m *parent* with 1m/3m/5m execution. At 5m
+    the window holds 12 bars and the sequence can fit.
+    """
+    bias_only = BIAS_VARIANTS[bias]
+    return [
+        _cell("strat5:ict_2022", bias_only, span, strategy="ict_2022", entry_tf="5min",
+              hypothesis="The 2022 model on 5m execution. At 15m it managed 23 trades "
+                         "in a year, too few to read."),
+        _cell("strat5:silver_bullet", bias_only, span, strategy="silver_bullet",
+              entry_tf="5min",
+              hypothesis="Silver Bullet on 5m, where its one-hour window holds 12 bars "
+                         "instead of 4 and the sequence can physically fit."),
+    ]
+
+
 def smoke(span=None) -> list[dict]:
     """Two cells over one month — verifies the harness before a long run.
 
@@ -306,6 +353,7 @@ SWEEPS = {
     "directions": directions,
     "triggers": triggers,
     "execution_tf": execution_tf,
+    "strategies_5m": strategies_5m,
     "bias": bias_rules,
     "geometry": geometry,
     "swing": swing_lengths,

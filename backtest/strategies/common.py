@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from ict import smc_adapter
 from ict.breaker_blocks import detect_breaker_blocks, get_active_breakers
+from ict.fib import calc_premium_discount
 from ict.ifvg import detect_ifvgs, get_active_ifvgs
 from ict.killzones import is_in_killzone, is_in_dead_zone, get_silver_bullet_window
 
@@ -82,6 +83,25 @@ def run_smc_detections(
     cur_price = float(df["close"].iloc[-1])
     cur_atr = calc_atr_simple(df)
 
+    # Premium/discount over the swing range, and the canonical key names that
+    # ict.confluence.bias_factors reads.
+    #
+    # This module used its own names — `pdhl` for previous_high_low, `liquidity`
+    # for liquidity_zones — and never computed premium/discount at all. But
+    # get_htf_bias hands these dicts to determine_ict_bias, which looks for the
+    # confluence path's names. Three of the four bias factors therefore abstained
+    # on every bar, bias was always neutral, and **both ICT strategies could never
+    # open a trade**. Measured: 23,564 consecutive declines over 2023, bias neutral
+    # on 2,065 of 2,065 kill-zone bars.
+    #
+    # The old names are kept alongside the new ones so existing readers in
+    # ict_2022.py and silver_bullet.py keep working.
+    swing_highs = [x for x in swings if x["type"] == "swing_high"]
+    swing_lows = [x for x in swings if x["type"] == "swing_low"]
+    range_high = max((x["level"] for x in swing_highs), default=float(df["high"].max()))
+    range_low = min((x["level"] for x in swing_lows), default=float(df["low"].min()))
+    pd_zone = calc_premium_discount(range_high, range_low, cur_price)
+
     result = {
         "swings": swings,
         "breaks": breaks,
@@ -91,8 +111,11 @@ def run_smc_detections(
         "obs": obs,
         "unmitigated_obs": smc_adapter.get_unmitigated_obs(obs),
         "liquidity": liquidity,
+        "liquidity_zones": liquidity,
         "retracement": retracement,
         "pdhl": pdhl,
+        "previous_high_low": pdhl,
+        "premium_discount": pd_zone,
         "current_price": cur_price,
         "breaker_blocks": breakers,
         "active_breakers": get_active_breakers(breakers, cur_price, cur_atr) if cur_atr else [],

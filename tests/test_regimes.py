@@ -146,3 +146,57 @@ class TestRobustness:
 
     def test_empty_is_safe(self):
         assert robustness({}) == {}
+
+
+class TestStrategyPathFeedsBiasCorrectly:
+    """The strategy path and the confluence path must speak the same dict shape.
+
+    `run_smc_detections` used its own key names — `pdhl` for previous_high_low,
+    `liquidity` for liquidity_zones — and never computed premium/discount, while
+    `get_htf_bias` hands those dicts to `determine_ict_bias`, which reads the
+    confluence names. Three of four bias factors therefore abstained on every bar,
+    bias was always neutral, and both ICT strategies could never open a trade:
+    23,564 consecutive declines over 2023.
+
+    Nothing failed loudly, which is why this test exists.
+    """
+
+    KEYS = ("bias", "premium_discount", "previous_high_low",
+            "liquidity_zones", "current_price")
+
+    @staticmethod
+    def _detections():
+        from backtest.strategies.common import run_smc_detections
+        idx = pd.date_range("2024-01-02", periods=400, freq="15min", tz="UTC")
+        rng = np.random.default_rng(3)
+        price = 5000 + np.cumsum(rng.normal(0, 2, len(idx)))
+        df = pd.DataFrame({
+            "timestamp": idx, "open": price, "close": price + rng.normal(0, 1, len(idx)),
+            "high": price + 3, "low": price - 3, "volume": 100,
+        })
+        return run_smc_detections(df, "entry", {})
+
+    def test_provides_every_key_the_bias_function_reads(self):
+        detections = self._detections()
+        missing = [k for k in self.KEYS if k not in detections]
+        assert not missing, f"bias_factors reads {missing}, which the strategy path omits"
+
+    def test_bias_factors_can_score_the_strategy_dicts(self):
+        """At least one factor must be able to vote. All four abstaining is the
+        failure mode that silenced both strategies."""
+        from ict.confluence import bias_factors
+        detections = self._detections()
+        votes = bias_factors(detections, detections, detections)
+        assert set(votes) == {"structure", "liquidity_draw", "premium_discount", "raid"}
+        assert any(v is not None for v in votes.values()), (
+            "every bias factor abstained on the strategy dicts — the shapes have "
+            "diverged again"
+        )
+
+    def test_legacy_key_names_still_present(self):
+        """ict_2022.py and silver_bullet.py read the old names, so both must exist."""
+        detections = self._detections()
+        for legacy, canonical in (("pdhl", "previous_high_low"),
+                                  ("liquidity", "liquidity_zones")):
+            assert legacy in detections and canonical in detections
+            assert detections[legacy] is detections[canonical]
