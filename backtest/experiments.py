@@ -231,13 +231,21 @@ def report(store: Path | str = STORE, top: int = 15) -> pd.DataFrame:
             ).round(1)
             cols = ["label", "trade_start", "trade_end", "entry_tf", "strategy",
                     "total_trades", "longs", "shorts", "win_rate",
-                    "coinflip_win_rate", "edge_vs_coinflip", "profit_factor",
-                    "return_pct", "max_drawdown_pct", "median_stop_pts",
-                    "median_target_pts", "score_slope", "top_rejection"]
+                    "coinflip_win_rate", "edge_vs_coinflip", "avg_rr",
+                    "profit_factor", "gross_pnl", "total_costs", "return_pct",
+                    "max_drawdown_pct", "median_stop_pts", "median_target_pts",
+                    "seconds", "top_rejection"]
             cols = [c for c in cols if c in rankable.columns]
             ranked = rankable.sort_values("edge_vs_coinflip", ascending=False)
             print("\n  Ranked by edge over each cell's own coin-flip benchmark:\n")
             print(ranked[cols].head(top).to_string(index=False))
+
+            if "hypothesis" in ranked.columns:
+                print("\n  Hypotheses, best first:\n")
+                for _, row in ranked.head(top).iterrows():
+                    if row.get("hypothesis"):
+                        print(f"     {row['label']}  ({row.get('seconds', 0):.0f}s)")
+                        print(f"        {row['hypothesis']}")
 
             trusted = ranked[ranked["total_trades"] >= MIN_TRADES_TO_TRUST]
             print(f"\n  {len(trusted)} of {len(ranked)} ranked cells reached "
@@ -278,6 +286,7 @@ def load_store(store: Path | str = STORE) -> pd.DataFrame:
             recorded = row.get("parameters") or {}
             for key in ("entry_tf", "strategy", "min_score", "trade_start", "trade_end"):
                 flat[key] = recorded.get(key, cell.get(key))
+            flat["hypothesis"] = cell.get("hypothesis", "")
             for key in ("trade_start", "trade_end"):
                 if flat[key]:
                     flat[key] = str(flat[key])[:10]

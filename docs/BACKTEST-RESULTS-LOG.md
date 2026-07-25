@@ -40,6 +40,71 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 19 — Two miscalculations fixed; the fix made results worse (July 2026)
+
+Configurations tried to date: **26**. Screening span 2023, ~6 min a cell, 6 cells
+in parallel in about 8 minutes.
+
+### Bug 1: the flagship setup picked the stalest zone in the window
+
+`_find_fvg_ob_overlap` returned the **first** overlapping FVG+OB it found. Detector
+output is ordered oldest-first, so "first" meant the oldest zone in a 500-1000 bar
+window — and its low then set the stop. On a constructed case the stop came out
+**102 points wide where the nearest zone gives 17**. The two sibling finders,
+`_find_ob_entry` and `_find_fvg_entry`, already selected by distance. Only the
+highest-priority setup did not.
+
+### Bug 2: a full stop-out reported +1.0R
+
+`rr_achieved` used `calc_risk_reward`, which takes `abs()` of both legs. So a
+losing trade reported a *positive* R multiple, and the "Avg R:R" printed in every
+report averaged +1.0 for each loss against ~+1.8 for each win. It read like
+expectancy while being incapable of going negative. Added `realized_r`, signed.
+
+The effect is immediate: `avg_rr` on the 2023 screen was +1.08 to +1.13 before and
+is **-0.19 to -0.33 after** — that is the real expectancy per trade in R, and it
+was previously invisible.
+
+### The uncomfortable result: fixing bug 1 made everything worse
+
+| Cell | Edge before | Edge after | Change | z after |
+|---|---:|---:|---:|---:|
+| no_pd_v2 | -2.7 | **-9.1** | -6.4 | **-3.62** |
+| no_pd_plurality | -2.8 | **-8.6** | -5.8 | **-3.46** |
+| all4_majority | -2.3 | **-8.0** | -5.7 | **-3.20** |
+| all4_v3 | +0.8 | -3.6 | -4.4 | -1.49 |
+| struct_liq_v2 | +0.4 | -3.4 | -3.8 | -1.30 |
+| no_pd_v3 | -2.7 | -4.5 | -1.8 | -1.47 |
+
+Edge is win rate minus that cell's own `stop/(stop+target)` benchmark, so it is
+comparable across the geometry change. Median stop tightened from 9.2-10.9 points
+to 8.2-9.2, and median target from 17.5 to ~15.
+
+**The change is correct and the results got worse.** Selecting a zone that price
+left 500 bars ago cannot be defended, and the sibling finders already did it right.
+So the earlier numbers were leaning on the wide stop the bug happened to produce.
+Reverting would be fitting the code to the backtest, which is not on the table.
+
+### The finding that matters: the entry is reliably anti-predictive
+
+Three cells now sit **3.2 to 3.6 sigma below** their own random-walk benchmark on
+~370 trades each. That is not an absence of edge — it is exploitable information
+pointing the wrong way, and at that sample size it is not noise.
+
+A plausible mechanism: the nearest zone is nearest *because* price is sitting on
+it, and a zone price is sitting on breaks about as often as it holds. Entering at
+market with a stop just beyond it is then a coin flip with a tight stop, which the
+cost model punishes at 11-12.6% of R.
+
+**Next: the inversion test.** Added as a first-class `invert` sweep with an
+`invert_bias` parameter rather than a monkeypatch, pairing each bias rule with its
+inverse so the comparison is like for like. If flipping lands materially above the
+benchmark, there is a sign or lag error in the entry logic and that is the bug. If
+it mirrors to roughly zero, the signal carries nothing and the geometry was doing
+all the work.
+
+---
+
 ## Experiment 18 — Cost model fixed; the edge does not survive it (July 2026)
 
 Configurations tried to date: **20**.

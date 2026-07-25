@@ -395,6 +395,23 @@ def determine_ict_bias(
     """
     from backtest import params
 
+    verdict = _vote_bias(bias_analysis, swing_analysis, entry_analysis)
+    if params.get("invert_bias", False):
+        # Diagnostic, not a strategy: if flipping the signal beats the random-walk
+        # benchmark, the entry logic has a sign or lag error rather than no edge.
+        # Measured at -3.5 sigma below random on 2023, so this is worth testing.
+        return {"bullish": "bearish", "bearish": "bullish"}.get(verdict, verdict)
+    return verdict
+
+
+def _vote_bias(
+    bias_analysis: dict,
+    swing_analysis: dict,
+    entry_analysis: dict,
+) -> str:
+    """Combine the bias factors under the configured vote rule."""
+    from backtest import params
+
     votes = bias_factors(bias_analysis, swing_analysis, entry_analysis)
     used = params.get("bias_factors_used", tuple(votes))
     rule = params.get("bias_vote_rule", "min_votes")
