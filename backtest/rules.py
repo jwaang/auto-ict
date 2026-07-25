@@ -85,6 +85,14 @@ def decide_trade(ict_context: dict, min_score: int = MIN_CONFLUENCE_SCORE) -> di
 
     direction = "LONG" if htf_bias == "bullish" else "SHORT"
 
+    # Restricting to one side is a diagnostic first and a config second. Measured
+    # on the 2023 screen, longs win 22.9% while shorts win 31.1% under the same
+    # rules, so the two sides are not equally broken and should be measurable apart.
+    allowed = params.get("allowed_directions", ("LONG", "SHORT"))
+    if direction not in allowed:
+        no_trade["reasoning"] = f"{direction} disabled by allowed_directions"
+        return no_trade
+
     # Find entry, SL, TP from ICT levels
     entry_price, stop_loss, take_profit, setup_type, concepts = _find_trade_levels(
         direction, entry_data, setup_data, current_price, ticker
@@ -184,6 +192,17 @@ def _find_trade_levels(
         ote = entry_data.get("ote", {})
         retracement = entry_data.get("retracement", {})
         in_ote = ote.get("valid") and retracement.get("in_ote", False)
+
+        # The retracement depth is measured against whichever leg is current, and
+        # `detect_retracements` reports that leg's direction — but `in_ote` is
+        # computed with abs() and never consulted it. A 70% pullback inside a
+        # bullish leg is a long setup; a 70% bounce inside a bearish leg is a short
+        # setup. Gating either trade direction on either leg is wrong half the time.
+        if in_ote and params.get("ote_require_direction", True):
+            leg = retracement.get("direction", "neutral")
+            wanted = "bullish" if direction == "LONG" else "bearish"
+            if leg != wanted:
+                in_ote = False
 
         if in_ote or not is_futures(ticker):
             entry_price, stop_loss = _find_fvg_entry(direction, aligned_fvgs, current_price, atr, sl_mult)

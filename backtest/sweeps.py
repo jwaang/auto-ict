@@ -193,6 +193,30 @@ def invert(span=SCREEN) -> list[dict]:
     return cells
 
 
+def directions(span=SCREEN, bias: str = "no_pd_v2") -> list[dict]:
+    """Are longs and shorts equally broken, or is the damage one-sided?
+
+    On the 2023 screen under identical rules, longs won 22.9% and shorts 31.1%.
+    Flipping the bias moved longs to 39.4% while shorts stayed near 30%, so the
+    anti-edge is concentrated on the long side. Isolating each side says whether
+    that is a real asymmetry in the entry logic or an artefact of the pairing.
+    """
+    base = {**ICT_GEOMETRY, **BIAS_VARIANTS[bias]}
+    return [
+        _cell("dir:both", base, span,
+              hypothesis="Control: both sides enabled, current rules."),
+        _cell("dir:long_only", {**base, "allowed_directions": ("LONG",)}, span,
+              hypothesis="Longs only. If this is far worse than shorts-only, the "
+                         "long entry path has a specific defect."),
+        _cell("dir:short_only", {**base, "allowed_directions": ("SHORT",)}, span,
+              hypothesis="Shorts only. Measured near 31% in both arms of the "
+                         "inversion test, suggesting shorts are merely edgeless."),
+        _cell("dir:ote_direction_off", {**base, "ote_require_direction": False}, span,
+              hypothesis="Revert the OTE direction check to measure what that bug "
+                         "was contributing. Expect worse if the fix is right."),
+    ]
+
+
 def smoke(span=None) -> list[dict]:
     """Two cells over one month — verifies the harness before a long run.
 
@@ -210,6 +234,7 @@ def smoke(span=None) -> list[dict]:
 SWEEPS = {
     "smoke": smoke,
     "invert": invert,
+    "directions": directions,
     "bias": bias_rules,
     "geometry": geometry,
     "swing": swing_lengths,
