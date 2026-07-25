@@ -81,6 +81,61 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 36 — Both real signals are sub-spread, and the reason is scale (July 2026)
+
+The magnet claim strengthens at a shorter window, which is the right shape: with
+a long enough lookahead everything fills and the control catches up.
+
+| lookahead | real fill | control | paired difference | z |
+|---|---|---|---|---|
+| 48 bars | 89.99% | 85.69% | **+4.30** [+3.73, +4.86] | **+15.05** |
+| 96 bars | 92.88% | 90.35% | +2.53 [+2.06, +3.01] | +10.32 |
+
+So the FVG magnet is real and monotone. Then the question that decides it.
+
+### The median gap is narrower than the cost of trading it
+
+Measured over 43,536 FVGs on 5-minute ES across the training span:
+
+| | points |
+|---|---|
+| median gap width | **0.75** |
+| median distance from price to gap midpoint | 1.88 |
+| **round-turn cost** | **1.02** |
+
+**59.8% of gaps are narrower than one round turn.** 26.2% have their midpoint
+closer to price than the cost itself, and 52.4% are within two round turns.
+
+The marginal edge from the magnet is 4.3 percentage points of fill probability
+over a matched control, applied to a median 1.88-point target: about 0.08 points
+of expectancy against 1.02 points of cost.
+
+### Both confirmed signals fail the same way
+
+| signal | significance | expectancy | cost | ratio |
+|---|---|---|---|---|
+| sweep continuation | z −11.68, n=12,413 | ~0.15 pt | 1.02 pt | 1 : 7 |
+| FVG magnet | z +15.05, n=43,536 | ~0.08 pt | 1.02 pt | 1 : 13 |
+
+### This is a statement about scale, not about ICT
+
+Five-minute ES structures have a characteristic size of roughly one to three
+points — a median gap of 0.75, a median target distance of 1.88. A retail round
+turn is 1.02 points. **Any signal defined on that geometry is sub-spread by
+construction**, whatever its name and however significant it is.
+
+That reframes every earlier result in this log. Seventy-three configurations
+failed not because ICT primitives are meaningless — two of them are real at
+z > 10 — but because the effects they describe live below the transaction floor.
+The search was never going to find a configuration that fixed that, because no
+arrangement of sub-spread signals produces a super-spread strategy.
+
+It also predicts, rather than assumes, that the remaining primitives will fail:
+CE reaction levels, OTE depths, order block and breaker retests are all defined
+on the same five-minute geometry and therefore inherit the same ratio.
+
+---
+
 ## Experiment 35 — The sweep signal is real, and smaller than the spread (July 2026)
 
 Experiment 34 found a genuine directional signal: after a sweep, price continues
