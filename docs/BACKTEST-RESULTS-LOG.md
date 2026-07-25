@@ -3,6 +3,47 @@
 Record of backtesting experiments, configurations, and findings.
 Last updated: July 2026.
 
+> ## Program conclusion, July 2026
+>
+> **On ES 15-minute data from 2021-07-25 to 2024-12-31, this mechanised ICT
+> methodology is indistinguishable from a matched random-direction strategy
+> before costs, and decisively untradable after them.**
+>
+> Sixty-eight configurations. The best cleaned directional result is **−0.22
+> win-rate points** over thirty seeds at n=729, against a break-even bar of
+> **+4.24**. Individual concepts sit at +0.2 (n=622) and +0.4 (n=142). No bias
+> rule, trigger, geometry, stop width, timeframe or entry gate has cleared its
+> own bar.
+>
+> Two structural findings explain why further search on this instrument is not
+> worth running.
+>
+> **Costs are ~1.02 points per round turn and independent of position size**, so
+> they are 10.9% of R at the observed 9.4-point stop. Break-even needs
+> `cost_share / (1 + m)` of edge, about +4 points. Widening the stop lowers that
+> (experiment 27) and so does coarsening the timeframe (experiment 30); neither
+> creates edge, and a cheaper bar buys nothing when there is none to protect.
+>
+> **The statistical hurdle has bound in every cell ever run.** Three standard
+> errors of the barrier win rate is +5.2 points at n=729, +8.7 at n=262 and
+> +16.8 at n=72. Coarsening the timeframe lowers the economic bar and raises the
+> statistical hurdle faster. Even at n=5000 the hurdle is +2.6, so an edge under
+> about +3.8 is untradable and one under +2.6 is undetectable. A public retail
+> methodology showing a clean +4-point directional edge on a liquid index future
+> after costs would be surprisingly large.
+>
+> What this program did produce is a measurement harness that can be trusted:
+> matched paired nulls, barrier-only scoring, cost accounting that reconciles by
+> construction, and — since experiment 28 — exact agreement between the engine
+> and the resolver used for every benchmark. Two published conclusions were
+> wrong and were found by that harness rather than survived by it.
+>
+> **The 2026-01 to 2026-07 holdout has never been opened.** No cell has ever run
+> past 2024-12-31. There is no candidate worth spending it on.
+>
+> Continuing requires a different instrument, or a different data source such as
+> order flow. Neither is on disk.
+
 > ## Every result below experiment 14 is superseded
 >
 > A July 2026 audit found seven bugs that change P&L. Numbers recorded before
