@@ -103,9 +103,28 @@ def validate_trade(
 
 
 def calc_risk_reward(entry: float, stop_loss: float, take_profit: float) -> float:
-    """Calculate reward-to-risk ratio."""
+    """Planned reward-to-risk ratio for a proposed trade.
+
+    Unsigned on purpose: a proposed target is favourable by construction, so both
+    legs are distances. Do NOT use this for a realised outcome — see realized_r.
+    """
     risk = abs(entry - stop_loss)
     reward = abs(take_profit - entry)
     if risk == 0:
         return 0.0
     return round(reward / risk, 2)
+
+
+def realized_r(direction: str, entry: float, stop_loss: float, exit_price: float) -> float:
+    """R multiple actually achieved, signed.
+
+    Losses must come out negative. Using the unsigned `calc_risk_reward` here
+    reported a full stop-out as +1.0R, so the reported "Avg R:R" was positive no
+    matter how the strategy performed — it averaged +1.0 for every loss and ~+1.8
+    for every win, and read like expectancy while being nothing of the kind.
+    """
+    risk = abs(entry - stop_loss)
+    if risk == 0:
+        return 0.0
+    move = exit_price - entry if direction == "LONG" else entry - exit_price
+    return round(move / risk, 2)

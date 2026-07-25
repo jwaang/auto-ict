@@ -17,7 +17,7 @@ from config import (
     is_futures,
 )
 from trading.account import Account
-from trading.risk import calc_risk_reward
+from trading.risk import realized_r
 
 
 def fill_penalty() -> float:
@@ -252,7 +252,7 @@ class PositionManager:
             "pnl_pct": round(pnl / notional * 100, 2) if notional else 0,
             "gross_pnl": round(pnl + costs, 2),
             "costs": round(costs, 2),
-            "rr_achieved": calc_risk_reward(pos.entry_price, pos.original_stop_loss or pos.stop_loss, exit_price),
+            "rr_achieved": realized_r(pos.direction, pos.entry_price, pos.original_stop_loss or pos.stop_loss, exit_price),
             "partial": True,
             "partial_quantity": round(quantity, 4),
         }
@@ -336,7 +336,7 @@ class PositionManager:
             "pnl_pct": pos.pnl_pct,
             "gross_pnl": round(gross, 2),
             "costs": round(costs, 2),
-            "rr_achieved": calc_risk_reward(pos.entry_price, pos.stop_loss, exit_price),
+            "rr_achieved": realized_r(pos.direction, pos.entry_price, pos.stop_loss, exit_price),
         }
 
     def close_position_manual(self, position_id: str, exit_price: float,

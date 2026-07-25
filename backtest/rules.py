@@ -222,24 +222,44 @@ def _find_fvg_ob_overlap(
     atr: float,
     sl_mult: float = 0.5,
 ) -> tuple[float | None, float | None]:
-    """Find an entry where an FVG and OB overlap."""
+    """Find an entry where an FVG and OB overlap, using the NEAREST such zone.
+
+    This used to return the first overlap it found. Detector output is ordered
+    oldest-first, so "first" meant the stalest zone in the window — often hundreds
+    of points away — which then set the stop via `ob_lo - atr * sl_mult` and gave
+    the widest possible stop. The other two finders here already pick by distance;
+    this one did not, and it is the highest-priority setup.
+
+    A zone's predictive value comes from price being at it, so nearest is both the
+    ICT reading and the consistent one.
+    """
+    best = None
+    best_dist = float("inf")
+
     for ob in obs:
         for fvg in fvgs:
             ob_lo, ob_hi = ob["low"], ob["high"]
             fvg_lo, fvg_hi = fvg["bottom"], fvg["top"]
-            # Check overlap
-            if ob_lo <= fvg_hi and fvg_lo <= ob_hi:
-                overlap_lo = max(ob_lo, fvg_lo)
-                overlap_hi = min(ob_hi, fvg_hi)
-                midpoint = (overlap_lo + overlap_hi) / 2
+            if not (ob_lo <= fvg_hi and fvg_lo <= ob_hi):
+                continue
 
-                if direction == "LONG" and midpoint < current_price:
-                    sl = ob_lo - atr * sl_mult
-                    return current_price, sl
-                elif direction == "SHORT" and midpoint > current_price:
-                    sl = ob_hi + atr * sl_mult
-                    return current_price, sl
-    return None, None
+            midpoint = (max(ob_lo, fvg_lo) + min(ob_hi, fvg_hi)) / 2
+            behind_price = (
+                midpoint < current_price if direction == "LONG" else midpoint > current_price
+            )
+            if not behind_price:
+                continue
+
+            dist = abs(current_price - midpoint)
+            if dist < best_dist:
+                best, best_dist = ob, dist
+
+    if best is None:
+        return None, None
+
+    if direction == "LONG":
+        return current_price, best["low"] - atr * sl_mult
+    return current_price, best["high"] + atr * sl_mult
 
 
 def _find_ob_entry(
