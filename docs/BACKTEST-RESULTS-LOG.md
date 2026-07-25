@@ -81,6 +81,84 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 43 — The full multi-timeframe sequence, and the geometry is fair (July 2026)
+
+The first faithful test of the methodology as specified: 15-minute context for
+bias, liquidity and the stop; 1-minute execution for the MSS and the entry.
+Experiment 42 ran every leg on one timeframe, which both starved the sample and
+removed the mechanism — entering and exiting on the same scale cannot produce the
+large R:R the methodology claims.
+
+### The structure did what it was built to do
+
+| | exp 42 arm C | exp 43 |
+|---|---|---|
+| fill rate | 1.9% | **7.1%** |
+| n | 178 | **665** |
+| median cost/R | — | **0.140** |
+
+Both registered predictions held: the finer execution leg completes the sequence
+far more often, and the coarse stop keeps cost/R low despite a fine-grained entry.
+`research/mtf_join.py` handles the two-frame join with 8 tests, the key one
+asserting an execution bar at the context bar's close is **excluded** — using it
+would react to a close with a bar that printed before that close existed.
+
+### The first attempt had a broken target, and the funnel showed it
+
+Median R:R came out at **0.27** — risking 7.27 points to make 2 — because
+`next_liquidity` took the *nearest* level while the stop sat beyond the coarse
+swept extreme. Target and stop were on different scales. That produced a 74.81%
+win rate needing 89.61%.
+
+The source never says nearest: it says the next **significant** draw, the 2022
+model says the opposite end of the swept range, Silver Bullet says typically 1:3.
+So a minimum-R:R floor was added to express "significant", and swept rather than
+chosen, since which level qualifies is a specification ambiguity.
+
+### The geometry is fair at every target distance
+
+| min R:R | median R:R | win rate | break-even needs | gap | mean net R | 95% |
+|---|---|---|---|---|---|---|
+| 0.0 | 0.26 | 75.04% | 90.64% | −15.6 | −0.115 | [−0.240, +0.032] |
+| 1.0 | 1.28 | 42.23% | 50.04% | −7.8 | −0.081 | [−0.262, +0.128] |
+| 1.5 | 1.79 | 33.40% | 40.91% | −7.5 | −0.038 | [−0.238, +0.187] |
+| 2.0 | 2.27 | 25.79% | 34.87% | −9.1 | −0.048 | [−0.253, +0.184] |
+| 3.0 | 3.31 | 18.67% | 26.43% | −7.8 | −0.028 | [−0.264, +0.226] |
+
+**Mean net R is negative at all five geometries.** Moving the target from 0.26R to
+3.31R takes the win rate from 75% to 19%, which is close to what fair barriers
+predict, and the shortfall against break-even stays pinned near 8 points
+throughout. Nothing about the target choice rescues it — the tradeoff is priced.
+
+The sharper reading: the win rate sits below even the **gross** break-even of
+`1/(1 + R:R)` at every geometry — 18.67 against 23.2 at the widest, 33.40 against
+35.8 in the middle. So this is not only a cost story. The entry performs at or
+slightly under what the barrier geometry alone implies.
+
+### It still cannot be powered, and that was the pre-registered stop
+
+n=664 at a 7.1% fill rate, against a floor of 5,000 — short by a factor of 7.5.
+Every interval spans zero.
+
+The decision to stop here was made **before** these numbers, precisely so it
+would not be made while looking at them. The alternative on the table was
+widening the MSS and retrace windows until the fill rate cooperated, and that was
+ruled out in advance: it stops being the sequence the source describes, and
+tuning a window until n suffices is a selection process on the same data — the
+mechanism behind both retractions in this log.
+
+What can honestly be said: across five independent target geometries the point
+estimate is negative every time and the win rate never reaches break-even, which
+is evidence against the sequence being profitable as specified; and the sample is
+too small for any of it to be significant on its own.
+
+**ICT's full setup cannot be validated or refuted on five years of ES at a
+timeframe where costs permit trading.** Powering it needs roughly 7.5 times the
+data — about 35 years of 15-minute history — or an instrument where the sequence
+fires far more often.
+
+---
+
 ## Experiment 42 — The prescribed entry points the right way and cannot be powered (July 2026)
 
 Experiment 41 left one lever untested. Everything measured so far entered at the
