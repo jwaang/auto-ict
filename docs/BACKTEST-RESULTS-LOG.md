@@ -303,8 +303,12 @@ back" rather than "does this zone work".
 | 12 | 48.71% | 49.83% | **−1.12** | **−2.99** |
 | 24 | 49.22% | 49.92% | −0.70 | −1.92 |
 
-**Every difference is negative**, and the absolute level matters as much as the
-comparison: continuation runs 47-49%, below a coin flip at every horizon.
+**Every difference is negative.** The absolute level was originally reported as
+"47-49%, below a coin flip at every horizon" — that part was a tie artifact and is
+withdrawn. Exact-zero close-to-close moves were counted as non-continuation; with
+ties excluded the rate is about 50.6%, at the coin flip. **The paired difference
+against the control survives**, because both sides carried the same bias, so the
+finding below stands and only the absolute claim was wrong. See experiment 40.
 
 So the two halves of the FVG claim separate cleanly:
 
