@@ -81,6 +81,83 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 44 — The order-block family, and two look-ahead bugs caught by the +5 rule (July 2026)
+
+The order block, breaker and mitigation block, built to the four-condition
+specification for the first time. Every order block previously measured here used
+`smc.ob()`, which implements none of the four conditions — the liquidity grab,
+the engulfment, the FVG or the MSS.
+
+### The strict definition finds more, not fewer
+
+| timeframe | `smc.ob()` full-frame | four-condition |
+|---|---|---|
+| 15m | 72 | **226** |
+| 5m | 122 | **463** |
+| 1m | — | **1,143** |
+
+`smc.ob()` on a full frame keeps mainly *unmitigated* blocks and discards the
+rest, so being stricter per candidate while keeping everything that passes yields
+roughly three times as many.
+
+**The engulfment is the binding condition.** At 15m it rejects 46,382 candidates
+against 1,445 for the FVG and 825 for the MSS. Once a candle grabs the prior
+extreme *and* closes fully beyond it, conditions 3 and 4 almost always follow —
+they are largely consequences of the displacement rather than independent
+filters. The specification reads as four requirements and behaves as about two.
+
+### Two look-ahead bugs, both caught by the "+5 points is a bug" rule
+
+The first pass returned +8 to +18 points with a textbook hierarchy — breaker >
+order block > mitigation — replicated on both timeframes. It looked like the
+specification vindicating itself.
+
+**Bug one:** a block requires an FVG within 3 bars and an MSS within 10 bars
+*after* the block candle, but the retest scan started at `i+2`. Reactions
+occurring before the confirming shift were being counted, so the block was
+selected using information that did not exist at the moment of entry. Fixed by
+recording `confirmed_index` and requiring retests to follow it.
+
+**Bug two, found because the fix worked unevenly.** After fixing bug one the
+order block and mitigation effects collapsed while the breaker held at
++14.8/+15.1/+14.1. **One arm surviving a correction that should have touched all
+three meant the correction was not actually shared.** `violated_with_shift`
+returned the *violation* bar, but a breaker does not exist until the opposing MSS
+confirms up to 12 bars later, so the same gap was still being counted.
+
+| arm (1m) | first pass | bug one fixed | both fixed |
+|---|---|---|---|
+| order block 1st | +8.0 / +7.9 / +13.5 | +1.5 / +0.1 / +4.4 | +1.5 / +0.1 / +4.4 |
+| mitigation | +0.2 / +9.4 / +8.9 | +6.4 / +4.3 / +6.0 | +6.4 / +4.3 / +6.0 |
+| breaker | +17.7 / +7.3 / +12.0 | +14.8 / +15.1 / +14.1 | **+8.5 / −2.2 / +0.6** |
+
+### The verdicts
+
+| concept | n (5m / 1m) | 5m | 1m | verdict |
+|---|---|---|---|---|
+| order block, 1st retest | 231 / 640 | −1.3 / +10.8 / −5.7 | +1.5 / +0.1 / +4.4 | **unknown** |
+| mitigation, 2nd+ retest | 214 / 612 | −3.0 / +5.3 / +0.1 | +6.4 / +4.3 / +6.0 | **unknown** |
+| breaker, flipped | 75 / 136 | +18.2 / +0.0 / +9.7 | +8.5 / −2.2 / +0.6 | **unknown** |
+
+No arm holds a consistent sign across horizons *and* timeframes, and every sample
+is far below the 5,000 floor. Recorded as unknown exactly as registered before
+the numbers existed, with sample count as the headline rather than effect.
+
+The honest reading beyond "unknown": after removing both look-aheads there is **no
+evidence of an effect** in any of the three, and the stated hierarchy — breaker
+stronger than order block, blocks weakening with each retest — does not survive
+either. But the samples cannot rule one out.
+
+### The pattern across this programme
+
+This is the third look-ahead-shaped defect found here, after `smc.ob()`'s
+unmitigated-survivor artifact at 97% and the session-end holiday carry worth 93%
+of gross profit. **All three made results look better than reality, never worse.**
+That asymmetry is the reliable signal: a number that flatters the hypothesis
+deserves suspicion before a number that disappoints it.
+
+---
+
 ## Experiment 43 — The full multi-timeframe sequence, and the geometry is fair (July 2026)
 
 The first faithful test of the methodology as specified: 15-minute context for

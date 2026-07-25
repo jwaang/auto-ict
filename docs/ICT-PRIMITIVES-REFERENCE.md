@@ -192,6 +192,17 @@ SCOB.
 displacement" with **no engulfment, no sweep, no FVG and no MSS requirement**.
 Every order-block measurement here used the loose version.
 
+**Status — unknown, with no evidence of an effect.** Built to all four
+conditions (`research/ict_order_block.py`, 14 tests): 463 blocks at 5m, 1,143 at
+1m. First retest gives −1.3/+10.8/−5.7 at 5m and +1.5/+0.1/+4.4 at 1m — no
+consistent sign, n far below the 5,000 floor. The **engulfment is the binding
+condition**, rejecting 46,382 candidates at 15m against 1,445 for the FVG and 825
+for the MSS, so the four requirements behave as about two.
+
+Two look-ahead bugs were found here by the "+5 points is a bug" rule: retests
+must start after the block's **confirming MSS**, not after the block candle. See
+experiment 44.
+
 **Measurement warning.** `smc.ob()` is window-dependent: a full-frame pass over a
 year finds 36 where non-overlapping 200-bar windows find 243, and the survivors
 are mainly *unmitigated* blocks — price never traded back into them, which is
@@ -219,6 +230,18 @@ Entry on the breaker retest, narrowed to the final candle of the original OB
 sequence. Stop beyond the wick of the swept extreme. Target the next liquidity
 pool. Breakers fail counter-bias. Its control is a **plain OB retest**, since the
 claim is comparative.
+
+**Status — unknown, with no evidence of an effect.** n=75 at 5m and 136 at 1m,
+giving +18.2/+0.0/+9.7 and +8.5/−2.2/+0.6. A breaker is not identifiable until
+the *opposing* MSS confirms, up to 12 bars after the violation; counting retests
+from the violation bar instead inflated this to a consistent +14 and was the
+second look-ahead found in experiment 44. The claim that a breaker is stronger
+than a plain order block does not survive the fix, though the sample cannot rule
+it out.
+
+**Mitigation block — unknown.** A later retest of a block never violated: n=214
+at 5m and 612 at 1m, −3.0/+5.3/+0.1 and +6.4/+4.3/+6.0. The claim that blocks
+weaken with each retest is not supported at these samples.
 
 ---
 
