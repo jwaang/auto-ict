@@ -81,6 +81,65 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 41 — The sweep/run edge is an endpoint edge, and does not survive barriers (July 2026)
+
+Experiment 40's sweep/run result is the only finding here to pass `|z| > 3`,
+`n >= 5000` and independent-timeframe replication. This applies geometry and
+costs to it. Stops follow the source — beyond the candle extreme that invalidates
+the trade, buffered in ATR so they scale — with targets at multiples of that risk.
+
+### Every cell loses, and cost is no longer the reason
+
+| cell | n | median risk | cost/R | mean net R | 95% interval | implied gross |
+|---|---|---|---|---|---|---|
+| 15m all forms | 9,296 | 8.01 pt | 0.127 | **−0.095** | [−0.194, +0.004] | **+0.03** |
+| 15m sweep form | 1,083 | 6.50 pt | 0.157 | −0.159 | [−0.292, −0.027] | −0.002 |
+| 5m sweep form | 3,103 | 3.87 pt | 0.264 | −0.307 | [−0.355, −0.259] | −0.043 |
+| 1m sweep form | 10,108 | 1.98 pt | 0.515 | −0.684 | [−0.731, −0.640] | −0.169 |
+
+Widening the stop did what it was supposed to: **cost drag fell from 0.515R at
+one minute to 0.127R at fifteen**, the lowest this programme has reached. It did
+not help, because gross expectancy is only about **+0.03R**.
+
+### An endpoint edge is not a path edge
+
+This is the lesson, and it is the second time it has appeared.
+
+The direction test asks: *is the close higher h bars later?* That is an
+**endpoint**. A trade asks: *does price reach +2R before −1R?* That is a **path**.
+A 55% chance of being up in fifteen minutes says very little about winning a race
+between two barriers, because the barrier outcome depends on the order in which
+levels are touched, not on where the series ends.
+
+So a +2.63 to +5.57 point directional edge — real, replicated, significant at
+z 10.24 — converts to roughly +0.03R gross. Experiment 35 found the same for the
+older sweep reading. **Directional accuracy at a fixed horizon should not be
+reported as evidence a strategy is close to viable**, and earlier entries in this
+log that estimated tradeability from win-rate edge alone (the "1:2 against costs"
+figure) were doing exactly that. The correct estimate is the barrier measurement,
+and it is 1:4 gross, not 1:2.
+
+### What survives
+
+The finding itself stands: the sweep/run rule is a real, replicated property of
+ES price. ICT's claim that higher-timeframe bias selects between reversal and
+continuation is **correct**, and it is the only ICT claim this programme has
+confirmed at full power.
+
+What does not follow is that it can be traded with these entries and exits. The
+15m all-forms interval reaches +0.004 at its top, so break-even is at the extreme
+edge of plausibility, and the point estimate is negative in all twelve geometries
+tested at every timeframe.
+
+Next: the entry actually prescribed. All of the above enters at the probe bar,
+which the source explicitly calls not a trade — the prescribed entry waits for a
+lower-timeframe MSS and enters on the PD array retest. Whether confirmation
+changes the *path* statistics, as opposed to the endpoint ones, is the open
+question and is the first thing this programme has had a mechanism-level reason
+to expect might differ.
+
+---
+
 ## Experiment 40 — A tie-handling bug, and the sweep/run rule replicating on three timeframes (July 2026)
 
 Two corrections and the best-supported result this programme has produced.
