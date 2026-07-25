@@ -71,6 +71,7 @@ def _run_cell(data_path: str, cell: dict, ticker: str, starting_balance: float) 
         row["parameters"] = result.parameters
         row["geometry"] = _geometry(result.trades)
         row["null"] = _null_benchmark(df, result, cell)
+        row["setup_split"] = _setup_split(df, result, cell)
         row["score_buckets"] = _score_buckets(result.trades)
         row["direction_split"] = _direction_split(result.trades)
         row["excursion"] = _excursion_summary(result.trades)
@@ -210,6 +211,60 @@ def _null_benchmark(df_1m, result, cell: dict, draws: int = 6000) -> dict:
         edge = _edge(int(wins), barrier["barrier_n"], null_rate / 100)
         out["edge_vs_null"] = edge.get("barrier_edge")
         out["z_vs_null"] = edge.get("barrier_z")
+    return out
+
+
+def _setup_split(df_1m, result, cell: dict) -> dict:
+    """Barrier win rate and matched null per setup type.
+
+    A total edge of zero can mean every concept is noise, or that some carry
+    positive edge and others negative and they cancel. The confluence score adds
+    them up without distinguishing, and it has no predictive slope, which fits
+    the cancellation story. Each setup type has its own stop and target
+    distribution, so each needs its own null rather than a shared one.
+
+    One run answers this, so it costs a per-type null — a tenth of a second each
+    — rather than a sweep.
+    """
+    from data.historical import resample_ohlcv
+    from backtest.nullmodel import geometry_from_trades, run_null_model
+
+    closed = [t for t in result.trades if t.get("status") == "CLOSED"]
+    by_type: dict[str, list] = {}
+    for t in closed:
+        by_type.setdefault(t.get("setup_type") or "UNKNOWN", []).append(t)
+    if len(by_type) < 2:
+        return {}
+
+    lo = pd.Timestamp(cell["trade_start"], tz="UTC") if cell.get("trade_start") else df_1m["timestamp"].iloc[0]
+    hi = pd.Timestamp(cell["trade_end"], tz="UTC") + pd.Timedelta(days=1) if cell.get("trade_end") else df_1m["timestamp"].iloc[-1]
+    span = df_1m[(df_1m["timestamp"] >= lo) & (df_1m["timestamp"] < hi)].reset_index(drop=True)
+    if span.empty:
+        return {}
+    bars = resample_ohlcv(span, cell.get("entry_tf", "15min"), session_aligned=True)
+    entry_times = pd.DatetimeIndex(bars["timestamp"])
+
+    out = {}
+    for name, trades in sorted(by_type.items()):
+        geom = _geometry(trades)
+        entry = {
+            "n": len(trades),
+            "barrier_n": geom.get("barrier_n", 0),
+            "barrier_win_rate": geom.get("barrier_win_rate"),
+            "net_pnl": round(sum(t.get("pnl_dollars") or 0 for t in trades), 2),
+        }
+        stops, mults = geometry_from_trades(trades)
+        if len(stops) and entry["barrier_n"]:
+            null = run_null_model(span, entry_times, stops, mults, n=4000,
+                                  seed=abs(hash(name)) % 2**31)
+            rate = null.get("null_win_rate")
+            if rate is not None:
+                wins = round(entry["barrier_win_rate"] / 100 * entry["barrier_n"])
+                edge = _edge(int(wins), entry["barrier_n"], rate / 100)
+                entry["null_win_rate"] = rate
+                entry["edge_vs_null"] = edge.get("barrier_edge")
+                entry["z_vs_null"] = edge.get("barrier_z")
+        out[name] = entry
     return out
 
 

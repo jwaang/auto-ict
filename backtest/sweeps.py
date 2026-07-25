@@ -395,6 +395,35 @@ def silver_bullet_extend(span=None, bias: str = "no_pd_v2") -> list[dict]:
     ]
 
 
+def concept_decomposition(span=TRAIN, bias: str = "all4_majority") -> list[dict]:
+    """Which ICT concept carries the edge, if any of them do?
+
+    Over the full training span the best bias config sits exactly on its null:
+    +0.5 win-rate points at z 0.33 over 878 barrier trades. Zero total edge can
+    mean every concept is noise, or that some are positive and some negative and
+    they cancel — and the confluence score, which adds them up, has no
+    predictive slope, which fits cancellation.
+
+    The entry waterfall records which concept fired as `setup_type`, so one run
+    decomposes it. `_setup_split` scores each type against its own matched null
+    rather than a shared one, because each has its own stop and target
+    distribution.
+
+    Pre-registered before looking: with 64 configurations already tried, a
+    concept is worth pursuing only at z > 3 and 200+ barrier trades. Anything
+    less is noise at this point in the search, and the 2026 holdout stays shut
+    either way.
+    """
+    return [
+        _cell("concept:full_train", {**ICT_GEOMETRY, **BIAS_VARIANTS[bias]}, span,
+              hypothesis="Decompose the entry waterfall by setup type over the "
+                         "full training span. Each type scored against its own "
+                         "matched null. Looking for one concept above +3.5 points, "
+                         "the breakeven bar at a 10-point stop.",
+              entry_tf="15min"),
+    ]
+
+
 def smoke(span=None) -> list[dict]:
     """Two cells over one month — verifies the harness before a long run.
 
@@ -418,6 +447,7 @@ SWEEPS = {
     "strategies_5m": strategies_5m,
     "sb_scope": silver_bullet_scope,
     "sb_extend": silver_bullet_extend,
+    "concepts": concept_decomposition,
     "bias": bias_rules,
     "geometry": geometry,
     "swing": swing_lengths,

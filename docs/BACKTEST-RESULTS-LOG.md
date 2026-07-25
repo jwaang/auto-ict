@@ -146,16 +146,68 @@ Pooled out-of-screen: **−2.0 points, z −0.47.**
 
 ### What to conclude
 
-1. **Silver Bullet is indistinguishable from random**, not worse than it. The
-   measured null moves the pooled figure from −4.2 to −2.0 and z to −0.47. That
-   is a different and more honest statement than the analytic null supported.
-2. **The default confluence strategy is significantly worse than random**, at
-   −9.8 points and z −3.41 on 280 barrier trades. It is not that the entries
-   carry no information; they reliably select bad moments.
-3. **The metric mattered more than any parameter.** Sixty-four configurations
-   produced no reliable winner, and the one apparent winner was an artefact of
-   scoring. Two of the three findings this round came from re-reading data
-   already on disk.
+1. **Silver Bullet is indistinguishable from random.** The measured null moves
+   the pooled out-of-screen figure from −4.2 to −2.0 at z −0.47.
+2. **So is the confluence entry, at n≈850 and z≈0.** This is the most
+   trustworthy number in the project: the largest samples available, scored
+   against random entries at matched geometry under matched censoring. The ICT
+   confluence entry neither beats nor loses to a coin flip. It just pays costs.
+3. **The bar is +3.5 points of edge** at today's stop width, and the best
+   measured is +0.5. No parameter change closes a gap that size, because the gap
+   is not in the parameters.
+4. **The metric mattered more than any parameter.** Sixty-four configurations
+   produced no reliable winner; the one apparent winner was an artefact of
+   scoring; and the "worse than random" reading that replaced it was an artefact
+   of screening on one year. All three corrections came from re-reading data
+   already on disk, at a total compute cost of about six seconds.
+
+### Then the measured null overturned conclusion 2 as well
+
+Re-scoring all 41 historical cells against a matched measured null took six
+seconds, and the full-span rows say something the 2023 screen rows cannot:
+
+| config | span | barrier n | edge vs null | z |
+|---|---|---|---|---|
+| bias:all4_majority | **2021-07 (3.5y)** | **878** | **+0.5** | **+0.33** |
+| bias:all4_v3 | 2021-07 | 843 | +0.2 | +0.13 |
+| bias:no_pd_plurality | 2021-07 | 798 | 0.0 | +0.03 |
+| bias:no_pd_v2 | 2021-07 | 803 | −0.1 | −0.03 |
+| bias:struct_liq_v2 | 2021-07 | 567 | −1.1 | −0.55 |
+| *the same four* | *2023 only* | *278–354* | *−3.7 to −6.2* | *−1.3 to −2.2* |
+
+**"Significantly worse than random" was a 2023 artefact.** Over the full training
+span, at the largest samples in the project, the entries sit exactly on their
+null. Across all 41 cells: 3 positive, none above z +2, and the mean
+overstatement of the analytic formula is **0.34 points** — not the 1.3 estimated
+from the five Silver Bullet cells, because the bias is concentrated where target
+multiples are widest.
+
+### Zero edge plus costs explains every loss, with no bug involved
+
+At edge 0 and a 1.90x target the gross expectancy is +0.012R. Costs are ~0.10R.
+Net −0.088R per trade over 878 barrier trades is −77R, which compounds to the
+observed −48.8%. A coin flip paying a toll.
+
+That makes the profitability bar exact for the first time. Break-even needs
+`WR = (1 + cost_share) / (1 + mult)`, so the required edge over a matched null is:
+
+| stop | cost as share of R | required edge (mult 1.9) |
+|---|---|---|
+| 10 pt *(today)* | 10.2% | **+3.5 pts** |
+| 15 pt | 6.8% | +2.3 pts |
+| 20 pt | 5.1% | +1.8 pts |
+| 30 pt | 3.4% | +1.2 pts |
+| 40 pt | 2.6% | +0.9 pts |
+
+Best measured edge is +0.5 at z 0.33. So stop width is a real lever on the
+*bar* — 30-point stops would turn −48% into roughly −5% — but at +0.5 edge no
+stop width reaches profit. **Nothing here is fixed by a parameter.**
+
+Note this does not resurrect the wide-stop hypothesis that experiment 21
+rejected. That test compared MFE measured in R, which mechanically shrinks as the
+stop widens, so it could not have detected a cost benefit either way. The correct
+question — does edge over a matched null hold up while the required edge falls? —
+needed the null to be askable at all.
 
 ### Correction to the record
 
