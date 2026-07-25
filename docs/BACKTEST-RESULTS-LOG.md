@@ -40,6 +40,99 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 20 — The anti-edge is on the long side (July 2026)
+
+Configurations tried to date: **36**. All on the 2023 screen, ~6 min a cell.
+
+### The inversion test: signal is backwards, but correcting it only reaches zero
+
+| Cell | n | WR | Coin-flip | Edge | z | PF | avg R |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| no_pd_v2 normal | 365 | 26.8% | 35.9% | -9.1 | **-3.62** | 0.59 | -0.33 |
+| no_pd_v2 **flipped** | 382 | 33.8% | 34.6% | -0.8 | -0.33 | 0.95 | -0.03 |
+| no_pd_plurality normal | 371 | 27.2% | 35.8% | -8.6 | **-3.46** | 0.60 | -0.32 |
+| no_pd_plurality **flipped** | 377 | 33.4% | 34.3% | -0.9 | -0.37 | 0.95 | -0.04 |
+| all4_majority normal | 370 | 28.1% | 36.1% | -8.0 | **-3.20** | 0.58 | -0.31 |
+| all4_majority **flipped** | 396 | 32.3% | 34.5% | -2.2 | -0.92 | 0.90 | -0.02 |
+
+Flipping the bias moves every pair from ~3.4 sigma below its benchmark to
+statistically indistinguishable from it. Profit factor goes 0.58-0.60 to 0.90-0.95
+and signed avg R goes -0.32 to -0.03.
+
+**So the signal points the wrong way, and correcting the sign yields a coin flip
+rather than an edge.** It does not mirror cleanly because flipping selects the
+opposite zones, so geometry changes too: stop 8.2 to 9.3, target 15.0 to 17.9.
+
+### Direction isolation: longs are the problem
+
+| Cell | n | WR | Coin-flip | Edge | z | PF | Return |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| short_only | 216 | 33.8% | 37.2% | -3.4 | -1.03 | 0.73 | -25.8% |
+| both | 310 | 28.4% | 37.1% | -8.7 | -3.17 | 0.60 | -52.2% |
+| **long_only** | 143 | **22.4%** | 37.9% | **-15.5** | **-3.82** | 0.46 | -38.2% |
+
+**Longs sit 15.5 points below their benchmark at z = -3.82. Shorts sit 3.4 below at
+z = -1.03, which is not significant.** The anti-edge is concentrated almost entirely
+on the long side, and it is worth noting 2023 was a grinding *uptrend* — losing
+money on longs in a rising market is the striking part.
+
+Caveat: long_only has 143 trades, under the 200 needed to trust a win rate. The gap
+to shorts is large enough to act on as a hypothesis, not as a settled fact.
+
+### Bug 3 confirmed by measurement: the OTE gate ignored its own direction
+
+`detect_retracements` reports whether the current leg is bullish or bearish, but
+`in_ote` was computed with `abs()` and never consulted it. A 70% pullback inside a
+bullish leg could gate a short, and a 70% bounce inside a bearish leg could gate a
+long — wrong half the time.
+
+| | Trades | WR | Return |
+|---|---:|---:|---:|
+| Direction check ON | 310 | 28.4% | -52.2% |
+| Direction check OFF (the bug) | 365 | 26.8% | -61.2% |
+
+The fix removed 55 trades and improved return by **9 points**. It was a real bug.
+
+### Regime validation, rebuilt
+
+`backtest/regimes.py` is replaced. The old version hardcoded four one-week windows
+picked by their realised return, and **three of the four fell inside the 2026
+holdout** — running them during iteration would have spent it unnoticed.
+
+The new approach is **attribution, not splicing**: run the span once, then split
+monthly P&L by regime. Each month is labelled from the **prior** month's trend
+efficiency and annualised volatility, so the label is knowable at the window's open
+and a live system could act on it. Splicing was rejected because one month yields
+~30 trades at 15m, it fragments the equity curve so drawdown stops meaning anything,
+and it discards the regime transitions where drawdowns happen.
+
+Measured on 2021-08..2024-12: 40 months labelled — trending_lowvol 13,
+choppy_highvol 13, choppy_lowvol 7, trending_highvol 7.
+
+Honest limit on the labels: prior-month volatility predicts next-month volatility
+reasonably (choppy_highvol realised std 5.55% vs trending_lowvol 3.26%), but
+prior-month trend efficiency barely predicts next-month efficiency. Treat the trend
+half of each label as a guess about conditions, not a description of them.
+
+`robustness()` reports how many regimes a config is profitable in, because earning
+in one regime only is a regime bet rather than an edge — and that is the shape
+overfitting takes when a sweep is scored on one aggregate number.
+
+### A bug in the new code, caught by its own test
+
+The efficiency ratio came out at **1.05** on a monotone series. `net` was measured
+from the first daily *open* while `path` started at the first daily *close*, so net
+covered a day path did not. Both are close-to-close now.
+
+### Next
+
+Log **MFE and MAE per trade** from the 1m data. If maximum favourable excursion
+rarely reaches 1.5R even on winners, the target is unreachable by construction and
+no amount of entry tuning fixes it. That is the measurement that would explain why
+an 8-9 point stop against a 15-18 point target fails in a grind.
+
+---
+
 ## Experiment 19 — Two miscalculations fixed; the fix made results worse (July 2026)
 
 Configurations tried to date: **26**. Screening span 2023, ~6 min a cell, 6 cells

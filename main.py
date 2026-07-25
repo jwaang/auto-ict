@@ -375,51 +375,81 @@ def cmd_regime_test(
     entry_tf: str = "15min",
     step: int | None = None,
     strategy: str = "default",
+    start: str = "2021-08-01",
+    end: str = "2025-01-01",
 ):
-    """Run backtest on representative regime weeks for quick validation."""
-    from backtest.engine import run_regime_backtest
-    from backtest.regimes import get_regime_weeks
-    from backtest.report import print_regime_report
+    """Run once over a span, then attribute the result across market regimes.
+
+    This used to run four hardcoded one-week windows chosen by their realised
+    return — three of which fell inside the holdout. Now the whole span runs once
+    and results are split by regime afterwards, with each month labelled from the
+    PRIOR month's trend efficiency and volatility so the label is knowable at the
+    window's open.
+
+    A config that only earns in one regime is a regime bet, not an edge.
+    """
+    from backtest.engine import run_backtest
+    from backtest.regimes import attribute, classify_months, robustness
+    from backtest.report import calc_stats
     from data.historical import load_continuous_contract
 
     balance = balance or STARTING_BALANCE
     min_score = min_score if min_score is not None else MIN_CONFLUENCE_SCORE
-    regime_weeks = get_regime_weeks(ticker.upper())
 
     print(f"\n{'='*60}")
-    print(f"  ICT Regime Test")
+    print(f"  ICT Regime Attribution")
     print(f"  Data: {data_path}")
-    print(f"  Ticker: {ticker}")
-    print(f"  Entry TF: {entry_tf}")
+    print(f"  Span: {start} to {end}   Ticker: {ticker}   Entry TF: {entry_tf}")
     print(f"  Strategy: {strategy}")
-    print(f"  Regimes: {len(regime_weeks)} weeks")
-    for w in regime_weeks:
-        print(f"    {w.label}: {w.start} to {w.end}")
     print(f"{'='*60}")
 
-    # Load full dataset once
-    print("\n[1/2] Loading historical data...")
+    print("\n[1/3] Loading historical data...")
     try:
         df_1m = load_continuous_contract(data_path)
-        print(f"      Loaded {len(df_1m):,} bars ({df_1m['timestamp'].min()} to {df_1m['timestamp'].max()})")
-    except Exception as e:
-        print(f"  ERROR: Failed to load data: {e}")
+        print(f"      {len(df_1m):,} bars ({df_1m['timestamp'].min()} to {df_1m['timestamp'].max()})")
+    except Exception as exc:
+        print(f"  ERROR: Failed to load data: {exc}")
         return
 
-    # Run regime backtests
-    print("\n[2/2] Running regime backtests...")
-    result = run_regime_backtest(
-        df_1m=df_1m,
-        regime_weeks=regime_weeks,
-        starting_balance=balance,
-        min_score=min_score,
-        ticker=ticker,
-        entry_tf=entry_tf,
-        step_bars=step,
-        strategy=strategy,
-    )
+    print("\n[2/3] Classifying months from prior-month signals...")
+    classification = classify_months(df_1m, start, end)
+    counts = classification.value_counts().to_dict()
+    print(f"      {len(classification)} months labelled: {counts}")
 
-    print_regime_report(result)
+    print("\n[3/3] Running the span once...")
+    result = run_backtest(
+        df_1m=df_1m, starting_balance=balance, min_score=min_score, ticker=ticker,
+        entry_tf=entry_tf, step_bars=step, strategy=strategy,
+        trade_start=pd.Timestamp(start, tz="UTC"),
+        trade_end=pd.Timestamp(end, tz="UTC"),
+    )
+    stats = calc_stats(result)
+    per_regime = attribute(stats.get("monthly_returns", {}), classification)
+    summary = robustness(per_regime)
+
+    print(f"\n  --- Overall ---")
+    print(f"  Trades {stats.get('total_trades')}  WR {stats.get('win_rate')}%  "
+          f"PF {stats.get('profit_factor')}  avg R {stats.get('avg_rr')}")
+    print(f"  Net ${stats.get('net_pnl', 0):,.0f}  "
+          f"(gross ${stats.get('gross_pnl', 0):,.0f} - costs ${stats.get('total_costs', 0):,.0f})")
+    print(f"  Max drawdown {stats.get('max_drawdown_pct')}%")
+
+    print(f"\n  --- By regime (labels are ex-ante) ---")
+    print(f"  {'regime':20}{'months':>8}{'net P&L':>13}{'per month':>12}{'winning':>9}")
+    for name, data in sorted(per_regime.items(), key=lambda kv: -kv[1]["pnl_per_month"]):
+        print(f"  {name:20}{data['months']:>8}{data['net_pnl']:>13,.0f}"
+              f"{data['pnl_per_month']:>12,.0f}{data['winning_months']:>6}/{data['months']}")
+
+    if summary:
+        print(f"\n  Profitable in {summary['regimes_profitable']} of "
+              f"{summary['regimes_covered']} regimes.")
+        print(f"  Worst: {summary['worst_regime']} at "
+              f"${summary['worst_regime_pnl_per_month']:,.0f}/month")
+        print(f"  Best:  {summary['best_regime']} at "
+              f"${summary['best_regime_pnl_per_month']:,.0f}/month")
+        if summary["regimes_profitable"] <= 1:
+            print("  Earning in one regime only — that is a regime bet, not an edge.")
+    print()
 
 
 def cmd_backtest(
@@ -659,7 +689,8 @@ def main():
                        choices=["default", "ict_2022", "silver_bullet"],
                        help="Trading strategy (default: confluence scoring)")
     p_bt.add_argument("--regime-test", action="store_true",
-                       help="Quick test on 4 representative weeks (one per market regime)")
+                       help="Run the span once, then attribute results per market regime "
+                            "(labels computed from prior-month data only)")
     p_bt.add_argument("--save", help="Path to save results JSON")
     p_bt.add_argument("--trades", type=int, default=20, help="Number of recent trades to show")
 
