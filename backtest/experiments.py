@@ -70,11 +70,17 @@ def _run_cell(data_path: str, cell: dict, ticker: str, starting_balance: float) 
         row["rejections"] = result.rejections
         row["parameters"] = result.parameters
         row["geometry"] = _geometry(result.trades)
-        row["null"] = _null_benchmark(df, result, cell)
-        row["setup_split"] = _setup_split(df, result, cell)
         row["score_buckets"] = _score_buckets(result.trades)
         row["direction_split"] = _direction_split(result.trades)
         row["excursion"] = _excursion_summary(result.trades)
+        # Diagnostics come last and cannot take the run down with them. A
+        # multi-hour backtest is too expensive to lose to an optional
+        # measurement, and one of these did exactly that.
+        for key, fn in (("null", _null_benchmark), ("setup_split", _setup_split)):
+            try:
+                row[key] = fn(df, result, cell)
+            except Exception as exc:  # noqa: BLE001
+                row[key] = {"error": f"{type(exc).__name__}: {exc}"}
     except Exception as exc:  # noqa: BLE001 - a broken cell must not kill the sweep
         row["error"] = f"{type(exc).__name__}: {exc}"
     row["seconds"] = round(time.time() - started, 1)
@@ -205,9 +211,12 @@ def _null_benchmark(df_1m, result, cell: dict, draws: int = 6000) -> dict:
     if span.empty:
         return {}
     bars = resample_ohlcv(span, cell.get("entry_tf", "15min"), session_aligned=True)
+    from backtest.intrabar import Intrabar
+    view, closes = Intrabar(span), span.set_index("timestamp")["close"]
     # Seeded on the label so a cell's null is fixed and cannot be re-rolled.
     out = run_null_model(span, pd.DatetimeIndex(bars["timestamp"]), stops, mults,
-                         n=draws, seed=abs(hash(cell.get("label", ""))) % 2**31)
+                         n=draws, seed=abs(hash(cell.get("label", ""))) % 2**31,
+                         intrabar=view, closes=closes)
     null_rate = out.get("null_win_rate")
     barrier = _geometry(result.trades)
     wins = None
@@ -225,7 +234,7 @@ def _null_benchmark(df_1m, result, cell: dict, draws: int = 6000) -> dict:
     if len(times):
         pair = run_null_model(span, times, pstops, pmults, n=draws,
                               seed=abs(hash(cell.get("label", "") + "paired")) % 2**31,
-                              paired=True)
+                              paired=True, intrabar=view, closes=closes)
         out["paired_null_win_rate"] = pair.get("null_win_rate")
         out["paired_null_censored_pct"] = pair.get("null_censored_pct")
         if pair.get("null_win_rate") is not None and wins is not None:
@@ -248,6 +257,7 @@ def _setup_split(df_1m, result, cell: dict) -> dict:
     — rather than a sweep.
     """
     from data.historical import resample_ohlcv
+    from backtest.intrabar import Intrabar
     from backtest.nullmodel import geometry_from_trades, run_null_model
 
     closed = [t for t in result.trades if t.get("status") == "CLOSED"]
@@ -264,6 +274,8 @@ def _setup_split(df_1m, result, cell: dict) -> dict:
         return {}
     bars = resample_ohlcv(span, cell.get("entry_tf", "15min"), session_aligned=True)
     entry_times = pd.DatetimeIndex(bars["timestamp"])
+    # One view for every type, not one per type.
+    view, closes = Intrabar(span), span.set_index("timestamp")["close"]
 
     out = {}
     for name, trades in sorted(by_type.items()):
@@ -277,7 +289,8 @@ def _setup_split(df_1m, result, cell: dict) -> dict:
         stops, mults = geometry_from_trades(trades)
         if len(stops) and entry["barrier_n"]:
             null = run_null_model(span, entry_times, stops, mults, n=4000,
-                                  seed=abs(hash(name)) % 2**31)
+                                  seed=abs(hash(name)) % 2**31,
+                                  intrabar=view, closes=closes)
             rate = null.get("null_win_rate")
             if rate is not None:
                 wins = round(entry["barrier_win_rate"] / 100 * entry["barrier_n"])

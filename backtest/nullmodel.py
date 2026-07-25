@@ -52,6 +52,8 @@ def run_null_model(
     n: int = 5000,
     seed: int = 0,
     paired: bool = False,
+    intrabar: Intrabar | None = None,
+    closes: pd.Series | None = None,
 ) -> dict:
     """Resolve `n` random entries and report how often the target came first.
 
@@ -89,8 +91,13 @@ def run_null_model(
                          "target_multiples index-aligned")
 
     rng = np.random.default_rng(seed)
-    intrabar = Intrabar(minute_df)
-    closes = minute_df.set_index("timestamp")["close"]
+    # Both are read-only views over the same span. A caller running several nulls
+    # — one per setup type, say — should build them once and pass them in rather
+    # than copying the minute frame per call.
+    if intrabar is None:
+        intrabar = Intrabar(minute_df)
+    if closes is None:
+        closes = minute_df.set_index("timestamp")["close"]
 
     if paired:
         picks = rng.integers(0, len(entry_times), size=n)
