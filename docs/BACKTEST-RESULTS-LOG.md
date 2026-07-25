@@ -127,7 +127,8 @@ figures. It did not: 33.03% on 760 barrier trades against the engine's 34.16% on
 764. Same trades, same stops, same targets. The strategy win rate comes from the
 engine while every null in this program is resolved by `Intrabar.first_touch`,
 so a disagreement between those two resolvers is a difference of rulers, not of
-skill — and at ~1.3% of trades it is the same size as the effect being measured.
+skill — and at 2.1% of trades on the figure that drives the win rate, it is
+larger than the effect being measured.
 
 Resolving all 841 trades both ways gives the disagreement directly:
 
@@ -141,26 +142,40 @@ Resolving all 841 trades both ways gives the disagreement directly:
 | SL_HIT | none | 8 |
 | SESSION_END | TP_HIT | 4 |
 
+Forty of the 841 are outright class disagreements, **4.8%**. `SESSION_END → none`
+is agreement rather than a third class: both say no barrier was reached before
+the cutoff. Of the forty, eighteen change the win/loss verdict itself, which is
+2.1% and is what moves the barrier win rate.
+
 Two separate faults, both in the session-end close at `engine.py:307`.
 
-**A. The engine opens positions on the 16:00 ET bar and closes them on the
-next one.** The force-close runs before the entry logic on the same bar, and
-nothing stops an entry being taken at the cutoff hour. 31 trades, median hold 15
-minutes, $1,691 of costs paid for it, net −$5,719.
+**A. The engine takes entries during the 16:00 ET hour.** The force-close runs
+before the entry logic on the same bar, and nothing stops an entry at the cutoff
+hour. 31 trades entered there, spread across all four 15-minute bars (7, 6, 7,
+11). Nineteen of them are the pure case — closed `SESSION_END` on the very next
+bar, $974 of costs for a 15-minute hold, net −$911. The remaining twelve ran to
+a barrier, 9 stops and 2 targets, and drag the whole group to $1,691 of costs
+and net −$5,719. The clean statement of the fault is the nineteen; the group
+figure describes every entry in that hour, which is a larger and looser claim.
 
 **B. The engine holds through market holidays.** The close fires only on a bar
 whose ET hour is 16. Databento omits minutes with no trade, and on a holiday or
 half-day session no such bar exists, so the position rides into later sessions.
-24 trades, median hold 20.6 hours, longest 119.2 hours — entered 2023-06-30,
-closed 2023-07-05, straight through Independence Day. The others cluster on
-Thanksgiving 2022 and 2023.
+**37 of the 894 weekday sessions in the training span — 4.1% — have no 16:00 ET
+bar at all**: every US market holiday and half-day, Thanksgiving and the Friday
+after, Independence Day, Labor Day, Good Friday 2023, Juneteenth 2024, Christmas
+Eve. On each of those the close cannot fire. 24 trades were caught by it, median
+hold 20.6 hours, longest 119.2 — entered 2023-06-30, closed 2023-07-05, straight
+through Independence Day. The rest cluster on Thanksgiving 2022 and 2023.
 
-Fault B is the one that matters. Those 24 trades returned **+$8,575 net**, and
-14 of the 24 are TP hits. The whole run's gross was +$10,717.50. A sum of the
-same order as the entire gross profit came from trades that broke the documented
-day-trade rule by running for days. It does not rescue the strategy — the run
-still lost 49.1% — but any future configuration that looked gross-positive could
-have been reading this.
+Fault B is the one that matters. Those 24 trades returned **+$9,958.50 gross**
+against the whole run's **+$10,717.50 gross**, and 14 of the 24 are TP hits.
+Nearly all of the gross profit in the run came from trades that broke the
+documented day-trade rule by running for days. It does not rescue the strategy —
+the run still lost 49.1% net — but any future configuration that looked
+gross-positive could have been reading this.
+
+The two sets overlap by one trade, so 54 of the 841 are affected.
 
 Both faults descend from the audit fix recorded at the top of this file, which
 replaced an unbounded `hour >= 16` with a bounded check. Bounding it was right.
@@ -177,15 +192,31 @@ even though the absolute win rates differ from the engine's.
 1. **A wider stop does not pay.** Edge against a matched paired null is flat in
    stop width at every geometry tested, and mean net R is negative at all of
    them. The +1.2 direction component has no economic value.
-2. **The engine and the null model resolve the same trade differently** on 3.5%
-   of trades, for two reasons that are now named and sized.
-3. **Twenty-four trades broke the day-trade rule** and supplied a gross-positive
-   figure of the same order as the whole run's.
+2. **The engine and the null model resolve the same trade differently** on 4.8%
+   of trades, 2.1% of them changing the win/loss verdict, for two reasons that
+   are now named and sized.
+3. **Twenty-four trades broke the day-trade rule** and supplied +$9,958.50 gross
+   against the whole run's +$10,717.50.
 
 Next: fix both faults and re-baseline. Fault A wants an entry guard at the
 cutoff hour; fault B wants the close driven by the session calendar rather than
-by a bar happening to exist. Experiment 26's baseline has to be re-run
-afterwards, because 55 of its 841 trades are affected.
+by a bar happening to exist. Neither has a test — `test_costs.py:75` checks what
+a session-end exit costs and `test_nullmodel.py:22` checks the `session_end()`
+helper, but nothing checks when the engine actually closes, which is why both
+survived the audit. Experiment 26's baseline has to be re-run afterwards,
+because 54 of its 841 trades are affected.
+
+### What Codex found in this writeup
+
+The review before implementation shaped the design. The review after it caught
+three errors in the numbers above, all corrected here: fault A was described as
+"opens on the 16:00 bar and closes on the next one" when the measured 31 are
+every entry in that hour and only 19 are next-bar stubs; the affected union was
+given as 55 when the two sets overlap by one trade; and the resolver
+disagreement was given as 3.5% when the matrix supports 4.8%, or 2.1% on the
+verdict-changing subset. It also supplied fault B's gross, which replaces a
+net-against-gross comparison that was not apples to apples. Claim 1, the
+stop-width result, it checked clean.
 
 ---
 

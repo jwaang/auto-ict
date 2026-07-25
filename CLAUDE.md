@@ -272,15 +272,17 @@ neutral. One cell, ~22 minutes.
 
 **Two session-end faults are open and block a clean baseline** (`engine.py:307`).
 The force-close fires only on a bar whose ET hour is 16. Nothing stops an entry
-being taken on that same bar, so 31 trades opened at the cutoff and closed 15
-minutes later, paying $1,691 in costs for it. And when a holiday or half-day
-leaves no such bar, the position rides on: 24 trades held past their session,
-the longest 119 hours through Independence Day, returning +$8,575 net against a
-whole-run gross of +$10,717.50. Both descend from the audit fix that replaced an
-unbounded `hour >= 16` with a bounded check — bounding it was right, anchoring it
-to a bar existing in that hour was not. Fix A with an entry guard, B by driving
-the close from the session calendar, then re-run experiment 26's baseline: 55 of
-its 841 trades are affected.
+being taken during that hour, so 31 trades opened at the cutoff, 19 of them
+closing on the very next bar for $974 of costs and a 15-minute hold. And when a
+holiday or half-day leaves no 16:00 bar the position rides on — that is 37 of
+894 weekday sessions, 4.1% — so 24 trades were held past their session, the
+longest 119 hours through Independence Day, returning **+$9,958.50 gross against
+the whole run's +$10,717.50**. Nearly all the gross profit came from trades that
+broke the day-trade rule. Both faults descend from the audit fix that replaced
+an unbounded `hour >= 16` with a bounded check — bounding it was right,
+anchoring it to a bar existing in that hour was not. Neither has a test. Fix A
+with an entry guard, B by driving the close from the session calendar, then
+re-run experiment 26's baseline: 54 of its 841 trades are affected.
 
 Beyond that, what remains needs a different instrument, a different data source
 such as order flow, or accepting that 15-minute ES is efficient at this horizon.
