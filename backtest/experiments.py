@@ -79,29 +79,98 @@ def _run_cell(data_path: str, cell: dict, ticker: str, starting_balance: float) 
     return row
 
 
+BARRIER_EXITS = ("SL_HIT", "TP_HIT")
+
+
 def _geometry(trades: list[dict]) -> dict:
-    """Stop and target distances, plus the random-walk win rate they imply.
+    """Stop and target distances, and the edge over the random-walk benchmark.
 
     Under a random walk with two absorbing barriers the chance of reaching the
     target first is stop/(stop+target). A strategy must beat its own benchmark,
     not 50%, so record it with every cell.
+
+    The benchmark only describes trades that actually resolved at a barrier.
+    Session-end and circuit-breaker closes touch neither — they exit at whatever
+    price is there — so scoring them against a two-barrier null mixes
+    populations. They tend to be small positive scratches, which inflates a
+    headline win rate without carrying P&L, so the edge is computed over barrier
+    exits alone and the rest is reported separately.
     """
     closed = [t for t in trades if t.get("status") == "CLOSED"]
-    risks, rewards, null = [], [], []
+    risks, rewards, null, wins = [], [], [], 0
+    nonbarrier_n, nonbarrier_pnl = 0, 0.0
     for t in closed:
+        pnl = t.get("pnl_dollars") or 0
+        if t.get("exit_reason") not in BARRIER_EXITS:
+            nonbarrier_n += 1
+            nonbarrier_pnl += pnl
+            continue
         risk = abs(t["entry_price"] - t["stop_loss"])
         reward = abs(t["take_profit"] - t["entry_price"])
         if risk > 0:
             risks.append(risk)
             rewards.append(reward)
             null.append(risk / (risk + reward))
+            wins += 1 if pnl > 0 else 0
+    out = {
+        "barrier_n": len(risks),
+        "nonbarrier_n": nonbarrier_n,
+        "nonbarrier_pnl": round(nonbarrier_pnl, 2),
+    }
     if not risks:
-        return {}
-    return {
+        return out
+    coinflip = float(pd.Series(null).mean())
+    out.update({
         "median_stop_pts": round(pd.Series(risks).median(), 2),
         "median_target_pts": round(pd.Series(rewards).median(), 2),
-        "coinflip_win_rate": round(pd.Series(null).mean() * 100, 1),
+        "coinflip_win_rate": round(coinflip * 100, 1),
+        "barrier_win_rate": round(wins / len(risks) * 100, 1),
+    })
+    out.update(_edge(wins, len(risks), coinflip))
+    return out
+
+
+def _edge(wins: int, n: int, coinflip: float) -> dict:
+    """Edge in win-rate points over the benchmark, with its z score.
+
+    z is the one-sample binomial test of the observed win count against the
+    benchmark rate. It is the number to look at, not the edge: a large edge on
+    twenty trades says nothing. With this many configurations tried, require
+    z > 3 before believing a winner (Harvey, Liu and Zhu 2016).
+    """
+    if n <= 0:
+        return {}
+    observed = wins / n
+    se = math.sqrt(coinflip * (1 - coinflip) / n)
+    return {
+        "barrier_edge": round((observed - coinflip) * 100, 1),
+        "barrier_z": round((observed - coinflip) / se, 2) if se > 0 else None,
     }
+
+
+def barrier_from_exit_reasons(exit_reasons: dict, coinflip: float | None) -> dict:
+    """Recover barrier-only figures for a row recorded before the fix.
+
+    Every run stores per-exit-reason counts, so the corrected metric is
+    derivable from history rather than requiring a re-run. Recomputing a
+    published number from data already on disk is a correction; editing the
+    stored numbers would not be, so this derives and never mutates.
+    """
+    if not exit_reasons:
+        return {}
+    n = sum(d["n"] for r, d in exit_reasons.items() if r in BARRIER_EXITS)
+    wins = sum(d["wins"] for r, d in exit_reasons.items() if r in BARRIER_EXITS)
+    other = [(r, d) for r, d in exit_reasons.items() if r not in BARRIER_EXITS]
+    out = {
+        "barrier_n": n,
+        "nonbarrier_n": sum(d["n"] for _, d in other),
+        "nonbarrier_pnl": round(sum(d["net_pnl"] for _, d in other), 2),
+    }
+    if n > 0:
+        out["barrier_win_rate"] = round(wins / n * 100, 1)
+        if coinflip is not None:
+            out.update(_edge(wins, n, coinflip / 100))
+    return out
 
 
 def _score_buckets(trades: list[dict]) -> dict:
@@ -263,19 +332,21 @@ def report(store: Path | str = STORE, top: int = 15) -> pd.DataFrame:
 
         if not rankable.empty:
             # Edge over the random-walk benchmark implied by each cell's own
-            # geometry, which is the only fair comparison across geometries.
-            rankable["edge_vs_coinflip"] = (
-                rankable["win_rate"] - rankable.get("coinflip_win_rate")
-            ).round(1)
+            # geometry, measured over barrier exits only. Ranking on the overall
+            # win rate instead flatters any config that force-closes a lot of
+            # small winners at the session end, because those resolve at neither
+            # barrier and so are not what the benchmark describes.
             cols = ["label", "trade_start", "trade_end", "entry_tf", "strategy",
-                    "total_trades", "longs", "shorts", "win_rate",
-                    "coinflip_win_rate", "edge_vs_coinflip", "avg_rr",
-                    "profit_factor", "gross_pnl", "total_costs", "return_pct",
-                    "max_drawdown_pct", "median_stop_pts", "median_target_pts",
-                    "seconds", "top_rejection"]
+                    "total_trades", "barrier_n", "longs", "shorts",
+                    "barrier_win_rate", "coinflip_win_rate", "barrier_edge",
+                    "barrier_z", "win_rate", "nonbarrier_n", "nonbarrier_pnl",
+                    "avg_rr", "profit_factor", "gross_pnl", "total_costs",
+                    "return_pct", "max_drawdown_pct", "median_stop_pts",
+                    "median_target_pts", "seconds", "top_rejection"]
             cols = [c for c in cols if c in rankable.columns]
-            ranked = rankable.sort_values("edge_vs_coinflip", ascending=False)
-            print("\n  Ranked by edge over each cell's own coin-flip benchmark:\n")
+            ranked = rankable.sort_values("barrier_edge", ascending=False)
+            print("\n  Ranked by edge over each cell's own coin-flip benchmark,"
+                  "\n  measured over barrier exits only (z is the number to trust):\n")
             print(ranked[cols].head(top).to_string(index=False))
 
             if "hypothesis" in ranked.columns:
@@ -332,7 +403,16 @@ def load_store(store: Path | str = STORE) -> pd.DataFrame:
             for key, value in (row.get("stats") or {}).items():
                 if not isinstance(value, (dict, list)):
                     flat[key] = value
-            flat.update(row.get("geometry") or {})
+            geom = row.get("geometry") or {}
+            flat.update(geom)
+            if "barrier_win_rate" not in geom:
+                # Recorded before the benchmark was restricted to barrier exits.
+                # Derive it from the stored exit-reason counts so old rows stay
+                # comparable instead of ranking on the inflated metric.
+                flat.update(barrier_from_exit_reasons(
+                    (row.get("stats") or {}).get("exit_reasons") or {},
+                    geom.get("coinflip_win_rate"),
+                ))
             for key, value in (row.get("excursion") or {}).items():
                 flat[key if key.startswith("median") or key.startswith("pct") else f"exc_{key}"] = value
             split = row.get("direction_split") or {}

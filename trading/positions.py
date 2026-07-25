@@ -219,7 +219,9 @@ class PositionManager:
                 # Partial close
                 partial_qty = math.floor(pos.original_quantity * PARTIAL_CLOSE_PCT)
                 if partial_qty > 0 and partial_qty < pos.quantity:
-                    partial_fill = self._partial_close(pos, target_1r, partial_qty, "PARTIAL_1R")
+                    # A partial exit crosses the spread like any other fill.
+                    price = self._apply_slippage(target_1r, pos.direction, "PARTIAL_1R")
+                    partial_fill = self._partial_close(pos, price, partial_qty, "PARTIAL_1R")
                     fills.append(partial_fill)
 
                 # Move SL to breakeven
