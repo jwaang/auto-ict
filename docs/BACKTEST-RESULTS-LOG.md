@@ -81,6 +81,64 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 38 — FVG strength tiers, and the first ICT claim to survive (July 2026)
+
+Experiments 36 and 37 pooled all 43,536 gaps. The source separates them into
+three mechanical tiers and says weak ones are traps to discard while exceptional
+ones react "almost always violently and immediately", so pooling averages the
+category to throw away with the category to trade.
+
+`research/fvg_quality.py` classifies from the three candles plus the one before
+them. Indexing verified empirically rather than assumed: `candle_index` points at
+the **third** candle, since the patched detector emits after candle 3 closes, so
+the displacement candle is `idx - 1` and the reference candle is `idx - 3`.
+
+### Geometry alone is not enough to define "exceptional"
+
+A first pass used only candle geometry — candle 2 breaks the prior candle's
+range, candle 3 extends beyond candle 2. That labels **72.1%** of gaps
+exceptional, which cannot describe institutional commitment. Making a new extreme
+is a low bar on a trending 5-minute chart.
+
+The source also requires a substantial body and minimal wicks on the middle
+candle, so "exceptional" now additionally requires that candle to *be* a detected
+displacement (body > 2x ATR). That moves the split to weak 9.2%,
+quietly strong 87.5%, **exceptional 3.2%** — 1,402 gaps, and a plausible rarity.
+
+### The tiers order exactly as claimed
+
+| tier | n | magnet (fill vs control) | reaction h=1 | h=4 | h=12 |
+|---|---|---|---|---|---|
+| weak | 4,018 | +4.36 (z 5.69) | **−3.07** | −0.83 | +0.65 |
+| quietly strong | 38,107 | +4.16 (z 13.37) | −0.35 | −0.60 | −0.89 |
+| **exceptional** | 1,401 | **+5.35** (z 3.63) | **+3.22** | +0.31 | **+3.18** |
+
+**The h=1 reaction is monotone in the predicted direction: −3.07, −0.35, +3.22.**
+Weak gaps are blown through, exceptional gaps react. That is what the source
+claims, and it is the first time in this programme that an ICT claim has been
+confirmed rather than refuted.
+
+The magnet holds in every tier and is strongest for exceptional (+5.35), which is
+also consistent — a stronger imbalance pulls harder.
+
+### What this does not yet establish
+
+Exceptional is n=1,197 for the reaction test at z +1.55 and +1.53. **Suggestive,
+not significant**, against a threshold of 3. Two positive cells out of nine
+examined, so they are also the best of nine.
+
+The stronger evidence is the *ordering* rather than any single cell, because it
+was predicted in advance by the source and appears across three independent
+populations. But an ordering with an underpowered top tier is a reason to get
+more samples, not to conclude.
+
+Note also what did not change: the pooled results from experiments 36 and 37 both
+survive the split. The magnet is real in all tiers, and the reaction is negative
+in the two tiers holding 96.7% of gaps. The tier taxonomy does not overturn
+those; it isolates a small subset that behaves differently.
+
+---
+
 ## Experiment 37 — The FVG is a magnet, not a springboard (July 2026)
 
 The FVG claim has two parts: price retraces into the gap, **and then continues in
