@@ -309,8 +309,28 @@ fall from 663 trades to 106. Loosening a filter replaced the book rather than
 extending it. The OTE gate has no edge of its own, but the population it
 excludes is significantly worse than random.
 
-What remains is not a sweep: a different instrument, a different horizon, or a
-different data source such as order flow.
+**The timeframe axis is closed too, on power.** Experiment 30 found the
+`timeframes` sweep had never been run and that 30m and 1h had never been tested.
+Costs behaved exactly as the model says — stops widened 9.36 to 12.92 to 14.21
+points, cost share fell from 10.9% of R to 7.2%, the break-even bar fell from
++4.24 to +2.70 — and gross went the other way, +$5,030 to −$4,712. A cheaper bar
+buys nothing when there is no edge to protect. Note ATR scales with about the
+square root of time, so four times the bar width bought only 1.5 times the stop.
+
+The general result matters more than the cells. **The economic bar falls with
+the timeframe and the statistical hurdle rises faster**, because trade count
+falls: three standard errors is +5.2 win-rate points at 15m, +8.7 at 30m and
++16.8 at 1h. There is no timeframe on this instrument where a marginal edge
+could be both real and detectable in the available history.
+
+The 1h cell returned edge +3.73 against its own bar of +2.70 with 100% of seeds
+positive, and it is nothing: seed spread measures null noise (~0.6 points), while
+sampling error on 72 barrier trades is 5.6, so the interval is about ±11 and z is
++0.66. **Never read `P(edge > 0)` across seeds as significance** — it answers a
+different question from the one that matters.
+
+What remains is not a sweep: a different instrument or a different data source
+such as order flow.
 
 ## Confluence Scoring (0-100)
 

@@ -40,6 +40,115 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 30 — Costs fall with the timeframe and it changes nothing (July 2026)
+
+Two cells, 19 min. The `timeframes` sweep had never actually been run — no `tf:`
+labels exist in `logs/experiments.jsonl` — and it only covered 5min and 15min.
+30-minute and 1-hour entries had never been tested at all.
+
+### The question, framed as Codex insisted rather than as first proposed
+
+The obvious framing was a cost test: cost drag is `1.02 / stop_points`, the
+binding constraint at 11% of R, and a coarser timeframe gives structurally wider
+stops. Experiment 27 had already shown that widening the stop on the *same* 15m
+entries lowers the bar without creating edge, but that broke the relationship
+between the stop and the structure that produced the setup. A coarser timeframe
+does not.
+
+Codex rejected the framing anyway, and was right to. Costs are the economic
+reason the test could matter; they are not the statistical hypothesis. The only
+live claim is structural — **coarser bars may define a different signal
+population with different information content** — and lower costs are necessary
+but not sufficient. Two outcomes were registered:
+
+- **costs only** — edge stays near zero, net R becomes less negative because
+  cost/R falls, and the bar is still missed. Not a tradable result.
+- **scale creates edge** — edge rises materially above zero, not merely above
+  the lowered bar, and net turns positive.
+
+### It is the first one
+
+Resolver agreement first, because none of the rest means anything without it.
+The engine reads a fill from the entry candle's high and low while every null is
+resolved on 1-minute data, so the coarser the bar the more room for the two to
+disagree — the exact failure that cost experiment 27 a conclusion:
+
+| cell | agree | disagree |
+|---|---|---|
+| 15m | 807 | **0** |
+| 30m | 305 | **0** |
+| 1h | 89 | **0** |
+
+One ruler at every timeframe. Then the result:
+
+| cell | trades | barrier n | median stop | WR | **edge** | sampling se | **z** | econ bar | stat hurdle | gross |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 15m | 807 | 729 | 9.36 | 33.33 | −0.22 | 1.75 | **−0.13** | 4.24 | 5.24 | +$5,030 |
+| 30m | 305 | 262 | 12.92 | 32.06 | −2.07 | 2.88 | **−0.72** | 3.07 | 8.65 | −$5,052 |
+| 1h | 89 | 72 | 14.21 | 34.72 | **+3.73** | 5.61 | **+0.66** | 2.70 | 16.83 | −$4,712 |
+
+**The cost mechanism worked exactly as predicted and bought nothing.** Stops
+widened, cost share fell from 10.9% of R to 7.2%, and the break-even bar fell
+from +4.24 to +2.70. Gross went the other way, +$5,030 to −$4,712. A cheaper bar
+is worth nothing when there is no edge to protect.
+
+The lever is also weaker than it looks. ATR scales with roughly the square root
+of time, so a four-times coarser timeframe bought only 1.5 times the stop.
+
+### The 1h cell looks like a winner and is not
+
+Its +3.73 clears its own economic bar of +2.70, and 100% of the thirty seeds are
+positive. Neither fact means what it appears to.
+
+**`P(edge > 0) = 100%` is across seeds, and seeds measure the wrong thing.** The
+spread across seeds is null-estimation noise, about 0.6 points. The uncertainty
+that matters is sampling error on the strategy's own 72 barrier trades, which is
+**5.6 points**. The interval on +3.73 is roughly ±11, and z is +0.66.
+
+This is the trap the pre-registration named in advance, in Codex's words before
+the run: *a true +2 or +3 point edge could be economically interesting and still
+look like noise.* Reporting the cell as a hit would have been the single easiest
+mistake available in this whole program.
+
+### The two hurdles move in opposite directions
+
+This is the general lesson, and it closes the timeframe axis rather than one
+cell of it.
+
+| cell | economic bar | statistical hurdle | binding |
+|---|---|---|---|
+| 15m | 4.24 | 5.24 | statistical |
+| 30m | 3.07 | 8.65 | statistical |
+| 1h | 2.70 | 16.83 | statistical |
+
+Coarsening the timeframe lowers the economic bar and raises the statistical
+hurdle faster, because trade count falls with it. At 1h, three standard errors
+is +16.8 win-rate points — an effect size nothing in this program has ever
+approached. **The statistical hurdle binds at every timeframe, and coarsening
+makes the problem worse.** There is no timeframe on this instrument at which a
+marginal edge could be both real and detectable within the available history.
+
+### Two caveats on comparability
+
+Neither cell is a clean one-variable change from the 15m baseline.
+
+**1h collapses the entry and setup timeframes into one bar series**, since
+`setup` is already 1H, so the confluence mechanics change rather than only the
+entry scale. And `get_windowed_data()` allocates lookback by entry-bar count, so
+15m, 30m and 1h see roughly 10, 21 and 42 trading days of history and therefore
+different detector populations. Both are properties of the design, not faults,
+but they mean these rows are directional evidence rather than controlled
+comparisons.
+
+### What is now established
+
+1. **Costs were never the only problem.** They fell as predicted and the result
+   did not improve, which is the "costs only" branch registered before the run.
+2. **The timeframe axis is closed**, on power rather than on any single result.
+3. **68 configurations.** Nothing has cleared its bar at any scale.
+
+---
+
 ## Experiment 29 — The OTE gate is the only thing holding the entry up (July 2026)
 
 One pre-registered cell, 20.5 min. The search on 15-minute ES stops here.
