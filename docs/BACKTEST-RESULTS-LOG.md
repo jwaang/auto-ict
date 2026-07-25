@@ -40,6 +40,76 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 21 — MFE/MAE on 1m: the target is unreachable, and a wider stop will not help (July 2026)
+
+Configurations tried to date: **40**. Excursion is pure measurement — the four
+`directions` cells reproduced byte-identical trade counts, win rates and returns,
+which is how I know the instrumentation changed nothing.
+
+### Every trade's path, measured on 1-minute bars
+
+| Cell | n | Target R | Median MFE | Median MAE | Ever reached target |
+|---|---:|---:|---:|---:|---:|
+| both | 310 | 1.59 | **0.70** | 1.13 | **24.5%** |
+| long_only | 143 | 1.61 | 0.61 | 1.16 | 19.6% |
+| short_only | 216 | 1.47 | 0.66 | 1.04 | 23.6% |
+| ote_direction_off | 365 | 1.70 | 0.68 | 1.15 | 22.7% |
+
+**The median trade travels 0.70R in its favour against a 1.59R target, and only
+24.5% ever reach the target at all.** Median adverse excursion is 1.13R, i.e. the
+median trade exceeds its stop.
+
+### Split by outcome — the exits are fine, the entries are not
+
+| Cell | MFE winners | MFE losers | MAE winners | MAE losers |
+|---|---:|---:|---:|---:|
+| both | 1.62 | **0.49** | 0.44 | 1.22 |
+| long_only | 1.58 | 0.44 | 0.39 | 1.25 |
+| short_only | 1.62 | 0.36 | 0.44 | 1.19 |
+
+Trades bifurcate cleanly. Winners barely threaten the stop (MAE 0.44R) and just
+clear the target (MFE 1.62R against a 1.59R target). Losers never get halfway
+(MFE 0.49R) and then blow through the stop (MAE 1.22R).
+
+**So no P&L is being lost to bad exit handling.** An entry either works almost
+immediately or fails almost immediately. That narrows the problem to the entry's
+directional accuracy, which the direction sweep already put at 3.8 sigma below
+random on longs.
+
+### This kills the wide-stop hypothesis
+
+Experiment 18 concluded the binding constraint was `cost_share_of_R = 1.02 /
+stop_points`, and that tripling R per trade was one of two ways out. That is now
+falsified: **losers only ever travel 0.49R in their favour.** Widening the stop
+cannot rescue a trade that never approached its target — it would only make each
+loss larger in dollars while leaving the hit rate untouched.
+
+The planned wide-stop geometry cell is therefore **dropped rather than run**, which
+is the cheapest possible outcome for that hypothesis.
+
+Nor does a nearer target work. Breakeven at target T against a 1R stop needs a
+`1/(1+T)` win rate. At T = 0.70R, where roughly half of trades reach, breakeven
+needs 59% — and only ~50% get there. The MFE distribution does not admit a
+profitable target anywhere.
+
+### What is left
+
+The entry has no directional edge, and the geometry cannot manufacture one. The
+remaining avenues, in order of what the evidence supports:
+
+1. **A different entry trigger.** Research flagged FVG and CISD as the only
+   causally clean ICT concepts; the current entry rests on order blocks, which are
+   defined retroactively. A CISD entry — a body close through a known opening
+   price — has never been tested here.
+2. **Selectivity, not tuning.** 310 trades in a year at 15m against costs of ~11%
+   of R. If only a small subset of setups carries the 24.5% target-reach rate,
+   finding it matters more than any parameter.
+3. **Accepting the answer.** Four sweeps and 40 configurations have produced
+   nothing above its own random-walk benchmark. That is a legitimate result about
+   this rule set on ES, not a tuning problem.
+
+---
+
 ## Experiment 20 — The anti-edge is on the long side (July 2026)
 
 Configurations tried to date: **36**. All on the 2023 screen, ~6 min a cell.
@@ -1021,6 +1091,13 @@ This was used as baseline for optimizer comparison.
 | Jul 24 | P&L attributed by exit reason | Revealed SESSION_END exits are profitable, not the leak |
 | Jul 24 | 2023 screening span + --span flag | Screen in ~6 min/cell instead of ~21; adversarial regime |
 | Jul 24 | 203 -> 218 tests (cost model, overrides) | Cost identity gross - costs == net asserted on every exit path |
+| Jul 24 | Nearest FVG+OB overlap, not the first found | Flagship setup was using the stalest zone in the window; 102pt stop vs 17pt |
+| Jul 24 | realized_r is signed | A full stop-out reported +1.0R, so Avg R:R could never go negative |
+| Jul 24 | OTE gate respects the retracement's direction | Was abs()-based; measured +9 points of return once fixed |
+| Jul 24 | invert_bias and allowed_directions params | Localised the anti-edge to longs at z = -3.82 |
+| Jul 24 | regimes.py rebuilt as ex-ante attribution | Old week presets were hindsight-picked and 3 of 4 sat in the holdout |
+| Jul 24 | backtest/intrabar.py — MFE/MAE on 1m bars | Median MFE 0.70R vs 1.59R target; killed the wide-stop hypothesis |
+| Jul 24 | Cells carry a hypothesis into the store | A recorded result now says why it was run, not just what it scored |
 | Jul 24 | Volume-derived contract roll | Replaces the 7-entry table; matches CME's customary roll dates exactly |
 | Jul 24 | Contracts ordered by last observed bar | No symbol parsing, so ESM6's Juneteenth expiry and 1-digit years are moot |
 | Jul 24 | session_day() on naive ET wall-clock | Kills the phantom Saturday session at each spring-forward |

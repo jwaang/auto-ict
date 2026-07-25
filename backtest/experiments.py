@@ -72,6 +72,7 @@ def _run_cell(data_path: str, cell: dict, ticker: str, starting_balance: float) 
         row["geometry"] = _geometry(result.trades)
         row["score_buckets"] = _score_buckets(result.trades)
         row["direction_split"] = _direction_split(result.trades)
+        row["excursion"] = _excursion_summary(result.trades)
     except Exception as exc:  # noqa: BLE001 - a broken cell must not kill the sweep
         row["error"] = f"{type(exc).__name__}: {exc}"
     row["seconds"] = round(time.time() - started, 1)
@@ -140,6 +141,43 @@ def _direction_split(trades: list[dict]) -> dict:
             out[side] = {"n": len(subset), "win_rate": round(wins / len(subset) * 100, 1)}
         else:
             out[side] = {"n": 0, "win_rate": None}
+    return out
+
+
+def _excursion_summary(trades: list[dict]) -> dict:
+    """Whether the target was ever reachable, measured on 1-minute bars.
+
+    `target_r` is what the strategy asked for. If `mfe_r` on winners barely
+    clears it and on losers sits far below, the target is unreachable by
+    construction and entry tuning cannot help. `mae_r` on winners says how close
+    the stop came to being grazed — high values mean a slightly wider stop would
+    convert losses into wins.
+    """
+    closed = [t for t in trades if t.get("status") == "CLOSED" and t.get("mfe_r") is not None]
+    if not closed:
+        return {}
+    frame = pd.DataFrame([{
+        "mfe_r": t["mfe_r"],
+        "mae_r": t["mae_r"],
+        "target_r": (abs(t["take_profit"] - t["entry_price"])
+                     / abs(t["entry_price"] - t["stop_loss"]))
+        if abs(t["entry_price"] - t["stop_loss"]) else None,
+        "win": (t.get("pnl_dollars") or 0) > 0,
+    } for t in closed])
+
+    out = {
+        "n": len(frame),
+        "median_target_r": round(frame["target_r"].median(), 2),
+        "median_mfe_r": round(frame["mfe_r"].median(), 2),
+        "median_mae_r": round(frame["mae_r"].median(), 2),
+    }
+    # The decisive number: how often price ever travelled as far as the target.
+    reached = frame["mfe_r"] >= frame["target_r"]
+    out["pct_reached_target_r"] = round(reached.mean() * 100, 1)
+    for label, subset in (("winners", frame[frame["win"]]), ("losers", frame[~frame["win"]])):
+        if not subset.empty:
+            out[f"median_mfe_r_{label}"] = round(subset["mfe_r"].median(), 2)
+            out[f"median_mae_r_{label}"] = round(subset["mae_r"].median(), 2)
     return out
 
 
@@ -295,6 +333,8 @@ def load_store(store: Path | str = STORE) -> pd.DataFrame:
                 if not isinstance(value, (dict, list)):
                     flat[key] = value
             flat.update(row.get("geometry") or {})
+            for key, value in (row.get("excursion") or {}).items():
+                flat[key if key.startswith("median") or key.startswith("pct") else f"exc_{key}"] = value
             split = row.get("direction_split") or {}
             flat["longs"] = (split.get("LONG") or {}).get("n")
             flat["shorts"] = (split.get("SHORT") or {}).get("n")

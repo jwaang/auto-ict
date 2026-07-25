@@ -15,6 +15,7 @@ import pandas as pd
 from zoneinfo import ZoneInfo
 
 from backtest import params
+from backtest.intrabar import Intrabar
 from backtest.rules import decide_trade
 from backtest.strategies import get_strategy
 from config import (
@@ -58,6 +59,22 @@ class BacktestResult:
 
 
 _NUMBERS = re.compile(r"-?\d+\.?\d*")
+
+
+def _record_excursion(trade: dict, intrabar, exit_time) -> None:
+    """Attach favourable and adverse excursion in R to a closed trade.
+
+    Pure measurement — it changes nothing about the trade. The question it answers
+    is whether the target was ever reachable: if MFE rarely reaches the target's R
+    even on winners, the geometry is wrong by construction.
+    """
+    if not trade.get("entry_time") or trade.get("stop_loss") is None:
+        return
+    got = intrabar.excursion(
+        trade["direction"], trade["entry_price"], trade["stop_loss"],
+        pd.Timestamp(trade["entry_time"]), pd.Timestamp(exit_time),
+    )
+    trade.update(got)
 
 
 def _accumulate_costs(trade: dict, fill: dict):
@@ -165,6 +182,10 @@ def _run_backtest_inner(
     bar_gap = entry_bars["timestamp"].diff()
     after_break = (bar_gap > bar_gap.mode().iloc[0]).to_numpy() if len(entry_bars) > 1 else None
 
+    # One-minute view for excursion measurement and, when enabled, for resolving
+    # which barrier a coarse bar hit first.
+    intrabar = Intrabar(df_1m)
+
     print(f"  Entry bars: {len(entry_bars)}, Warmup: {warmup_bars}, Step: {step_bars}")
     print(f"  Bars to process: ~{(len(entry_bars) - warmup_bars) // step_bars}")
 
@@ -239,6 +260,7 @@ def _run_backtest_inner(
                         t["rr_achieved"] = fill["rr_achieved"]
                         t["exit_time"] = str(current_time)
                         t["status"] = "CLOSED"
+                        _record_excursion(t, intrabar, current_time)
                     break
 
             result.equity_curve.append({
@@ -269,6 +291,7 @@ def _run_backtest_inner(
                             t["rr_achieved"] = fill["rr_achieved"]
                             t["exit_time"] = str(current_time)
                             t["status"] = "CLOSED"
+                            _record_excursion(t, intrabar, current_time)
                             break
                     result.equity_curve.append({
                         "timestamp": str(current_time),
@@ -296,6 +319,7 @@ def _run_backtest_inner(
                                 t["rr_achieved"] = fill["rr_achieved"]
                                 t["exit_time"] = str(current_time)
                                 t["status"] = "CLOSED"
+                                _record_excursion(t, intrabar, current_time)
                                 break
                         result.equity_curve.append({
                             "timestamp": str(current_time),
@@ -439,6 +463,7 @@ def _run_backtest_inner(
                     t["rr_achieved"] = fill["rr_achieved"]
                     t["exit_time"] = str(last_bar["timestamp"])
                     t["status"] = "CLOSED"
+                    _record_excursion(t, intrabar, last_bar["timestamp"])
                     break
 
     result.equity_curve.append({
