@@ -81,6 +81,53 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 35 — The sweep signal is real, and smaller than the spread (July 2026)
+
+Experiment 34 found a genuine directional signal: after a sweep, price continues
+rather than reverses, 55.3% at five minutes, z -11.68. This applies geometry and
+costs to 12,413 sweeps over the training span, entering in the continuation
+direction, resolved on 1-minute data through the same first-touch logic and
+16:00 cutoff as every other measurement here.
+
+### Every geometry loses
+
+| stop | cost/R | best mean net R | 95% interval | implied gross edge |
+|---|---|---|---|---|
+| 3 | 34.0% | −0.3404 | [−0.3538, −0.3269] | ~0.000 |
+| 5 | 20.4% | −0.1870 | [−0.2022, −0.1726] | +0.017 |
+| 8 | 12.8% | −0.1080 | [−0.1241, −0.0911] | +0.020 |
+| 12 | 8.5% | −0.0812 | [−0.0976, −0.0640] | +0.004 |
+
+All sixteen cells negative, every interval excluding zero, best −0.0812R at a
+12-point stop. Mean net R improves monotonically as the stop widens, exactly
+tracking `1.02 / stop`, which is the signature of a result driven by cost drag
+rather than by anything in the signal.
+
+### The reason is magnitude, not direction
+
+Subtracting the known cost drag leaves a gross edge of **+0.00 to +0.02R**. The
+direction edge is real but almost absent once expressed in R.
+
+Over five minutes ES moves on the order of ±1.5 points. A 55/45 split on that is
+about 0.15 points of expectancy. One round turn costs **1.02 points**. The signal
+is smaller than the spread by roughly seven times.
+
+That is the cleanest statement this program has produced. **A genuine market
+inefficiency exists, is overwhelmingly significant at z −11.68 on n=12,413, and
+is too small to transact on.** Nothing about strategy construction changes it:
+the edge decays to nothing by two hours, so it cannot be held for long enough to
+outgrow the spread, and it is too small at five minutes to pay for crossing it.
+
+### What this closes
+
+The primitive programme has now answered its own question. Of the primitives
+carrying directional claims, the sweep is the strongest and it is
+non-transactable. The FVG magnet claim holds (+2.53 points, z +10.32) but is a
+statement about where price goes, not about expectancy — a limit entry at the
+gap gets filled, which is not the same as winning.
+
+---
+
 ## Experiment 34 — Two real findings: the FVG magnet holds, and sweeps predict the opposite of what ICT says (July 2026)
 
 The first properly-controlled positive results in this program, on 5-minute ES
