@@ -1,5 +1,7 @@
 """Shared test fixtures for ICT Paper Trading Simulator tests."""
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -222,3 +224,43 @@ def large_ohlc_for_smc(large_ohlcv):
     df = df.set_index("timestamp")
     df.index.name = None
     return df
+
+
+# Real market data. `historical/` is gitignored, so these skip when it is absent.
+REAL_DATA = Path("historical/ES-5y/glbx-mdp3-20210724-20260723.ohlcv-1m.dbn.zst")
+_real_cache: dict = {}
+
+
+def _real_15m(bars: int = 1500):
+    """Load a slice of real front-month ES, resampled to 15m.
+
+    A gapless random walk cannot exercise weekend gaps, the daily maintenance
+    halt, holidays, contract rolls or DST, all of which real ES has. Causality
+    invariants that only hold on synthetic data are not invariants.
+    """
+    if "df" not in _real_cache:
+        from data.historical import load_continuous_contract, resample_ohlcv
+        df = load_continuous_contract(str(REAL_DATA))
+        _real_cache["df"] = resample_ohlcv(df, "15min")
+    # Take from the middle of the span so a contract roll falls inside the slice.
+    full = _real_cache["df"]
+    start = len(full) // 2
+    return full.iloc[start:start + bars].reset_index(drop=True)
+
+
+@pytest.fixture
+def real_ohlc_for_smc():
+    """Real ES 15m bars in SMC form, or skip if the dataset is not present."""
+    if not REAL_DATA.exists():
+        pytest.skip(f"real dataset not present at {REAL_DATA}")
+    return _to_smc(_real_15m())
+
+
+@pytest.fixture(params=["synthetic", "real"])
+def any_ohlc_for_smc(request, large_ohlcv):
+    """Causality fixture parameterized over synthetic and real data."""
+    if request.param == "real":
+        if not REAL_DATA.exists():
+            pytest.skip(f"real dataset not present at {REAL_DATA}")
+        return _to_smc(_real_15m())
+    return _to_smc(large_ohlcv)

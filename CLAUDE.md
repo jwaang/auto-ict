@@ -37,6 +37,14 @@ py main.py download-history                          # 90 days ES, saves to hist
 py main.py download-history --symbol MES --days 30
 py main.py download-history --symbol ES --days 90 --save historical/ES-90d.csv
 
+# Experiment harness — run a named sweep, then rank everything recorded so far
+py main.py sweep smoke historical/ES-5y/glbx-mdp3-20210724-20260723.ohlcv-1m.dbn.zst
+py main.py sweep bias historical/ES-5y/glbx-mdp3-20210724-20260723.ohlcv-1m.dbn.zst
+py main.py sweep-report --top 20
+
+# Check a dataset before backtesting on it (integrity, session calendar, rolls)
+py main.py validate-data historical/ES-5y/glbx-mdp3-20210724-20260723.ohlcv-1m.dbn.zst
+
 # Backtest on historical 1-minute OHLCV data
 py main.py backtest path/to/ohlcv-1m.csv
 py main.py backtest data.csv --ticker ES --start 2025-04-07 --end 2025-07-01
@@ -110,9 +118,11 @@ Backtest (strategies): Historical CSV (data/historical.py)
 | `backtest/` | `engine.py`, `rules.py`, `report.py` | Walk-forward backtesting engine with rule-based decisions and analytics |
 | `backtest/strategies/` | `ict_2022.py`, `silver_bullet.py`, `common.py` | ICT-specific strategies using temporal sequence detection (sweep → MSS → FVG) |
 | `backtest/` | `optimize.py` | Walk-forward confluence threshold optimization (train/test split, parallel) |
+| `backtest/` | `experiments.py`, `sweeps.py`, `params.py` | Experiment harness — config matrix runner, named sweeps, per-run parameter overrides |
+| `data/` | `validate.py` | Dataset checker: integrity, session calendar, rolls, condition flags |
 | `backtest/` | `regimes.py` | Regime-based test presets (4 representative weeks per asset for quick validation) |
 | `journal/` | `logger.py` | JSON trade log with ICT context snapshots and IBKR order IDs |
-| `tests/` | `test_no_lookahead.py`, `test_trading.py`, `test_smc_patched.py`, etc. | 156 regression tests (causality, trading, SMC detectors, data) |
+| `tests/` | `test_no_lookahead.py`, `test_trading.py`, `test_smc_patched.py`, etc. | 188 regression tests (causality on synthetic AND real data, trading, SMC detectors, data loading, contract rolls, session days, session alignment) |
 
 ### Vendored SMC Library (`ict/smc_patched.py`)
 
@@ -157,7 +167,53 @@ Select via `--strategy ict_2022|silver_bullet|default` CLI flag. The `default` s
 
 For backtesting, all timeframes are resampled from 1m data. Bar timestamps use **bar-close labeling** (a 1H bar covering 10:00-10:59 is stamped 11:00) to prevent look-ahead bias in windowed analysis.
 
+Daily and 4H bars are **session-aligned**: their bins run from the 18:00 ET CME open rather than UTC midnight, so one daily bar covers one trading day (18:00 ET to 17:00 ET) instead of straddling two. The boundary follows ET wall-clock, so it holds across DST. Pass `session_aligned=True` to `resample_ohlcv()`. Hourly and finer bins land on the same edges either way and do not use it.
+
 When `--start` is provided, 90 extra days of data are loaded before the start date for HTF warmup (daily/4H need enough bars for swing detection). The engine uses a `trade_start` parameter to only open trades within the requested date range.
+
+## Experiment Harness (`backtest/`)
+
+Strategy research runs through a config matrix, not by hand-editing constants.
+
+**`params.py` — per-run overrides.** Most constants reach their consumers through
+`from config import X`, which binds the value at import time, so rebinding `config.X`
+per run does nothing. Consumers that need to be sweepable read
+`params.get("name", CONFIG_DEFAULT)` at call time instead, and a runner wraps each
+cell in `with params.overrides({...})`. This generalises the pattern
+`ict.smc_adapter.set_swing_length_override` already used. It is fork-safe: each
+`ProcessPoolExecutor` worker gets its own module globals.
+
+**When adding a sweepable knob, route it through `params.get()` at every site that
+reads it.** `MIN_RR_RATIO` is enforced in both `backtest/rules.py` and
+`trading/risk.py`; overriding one alone leaves the other vetoing every trade.
+
+Overrides in use: `min_rr_ratio`, `tp_min_r`, `tp_selection`, `tp_fallback_r`,
+`futures_min_sl_points`, `futures_max_sl_points`, `drawdown_limit_pct`,
+`smc_swing_length`, `bias_factors_used`, `bias_vote_rule`, `bias_min_votes`.
+
+**`experiments.py` — matrix runner and store.** Workers get the data file *path*, not
+the frame, and cache it per process; pickling 1.8M rows per cell would cost more than
+the backtest. Workers are bounded to `cpu_count - 2`. A failing cell is recorded as a
+row with an `error`, never allowed to kill the sweep. Every cell appends one line to
+`logs/experiments.jsonl` with its config, the full stats, the rejection funnel,
+geometry, direction split and score buckets.
+
+**`sweeps.py` — named, version-controlled matrices.** Sweeps live in git because a
+result is only reproducible if the exact cell list is recorded, and the honest reading
+of a winner depends on how many configurations were tried. Sweeps are small and
+sequential rather than one big factorial, so each answers one question.
+
+Run `sweep smoke` first — macOS spawns workers rather than forking, so an entry-point
+problem surfaces in a minute instead of an hour into a real sweep.
+
+**Judging a result.** `sweep-report` ranks by edge over each cell's own random-walk
+benchmark, `stop / (stop + target)`, because a strategy with a distant target has a
+low coin-flip win rate and comparing raw win rates across geometries is meaningless.
+Cells under 30 trades are unrankable and under 200 are suggestive only. With many
+configurations tried, require t > 3 rather than t > 2 (Harvey/Liu/Zhu).
+
+**Spans.** Screen and select on 2021-07 to 2024-12. 2025 has been seen
+diagnostically. 2026-01 to 2026-07 is the untouched holdout — look once, at the end.
 
 ## Confluence Scoring (0-100)
 
@@ -186,13 +242,32 @@ Minimum score to trade: 60. Weights defined in `config.CONFLUENCE_WEIGHTS`.
 
 The backtest engine uses deterministic rules (`backtest/rules.py`). The live path (`main.py analyze`) also uses these same rules when `USE_AI_ANALYSIS = False` (current default). Set `True` in `config.py` to re-enable Claude AI decisions.
 
-1. **4-factor HTF bias required** — `determine_ict_bias()` scores structure direction + liquidity draw + premium/discount + raid status. Requires 3+ of 4 factors aligned; 2-2 tie uses structure as tiebreaker; anything else = neutral (no trade).
+1. **HTF bias required** — `determine_ict_bias()` combines four factors scored by
+   `bias_factors()`: structure direction, liquidity draw, premium/discount, and raid
+   status. Default is 3+ aligned, with structure breaking a tie; the rule and the
+   factor set are sweepable (`bias_vote_rule`, `bias_min_votes`, `bias_factors_used`).
+
+   Two things to know before touching this. The **raid factor used to abstain on every
+   single bar**: it asked whether a side had been swept anywhere in the 200-bar window,
+   and with ~16 liquidity zones a bar at ~88% swept the answer was always "both", so
+   "3 of 4" was really unanimity. It now compares which side was swept *most recently*.
+   And **premium/discount votes bearish ~97% of the time** in a rising market, so as a
+   direction vote it is a standing short bias — ICT uses premium/discount to decide
+   where to enter inside a bias, not which way to trade. Drop it from the vote with
+   `bias_factors_used`. Before these were understood, the function returned a
+   directional bias on ~1% of bars and never once returned bullish across 2025.
 2. **Kill zone gate** (configurable via `ENFORCE_KILL_ZONES`, default OFF) — when enabled, entries only during London (2-5 AM ET), NY (7-11 AM ET), or Asian (7-10 PM ET). Backtesting showed higher P&L with kill zones OFF.
 3. **Dead zone block** (only when kill zones enabled) — no entries during NY lunch (11 AM - 1 PM ET)
 4. **Confluence >= 60**
 5. **Actionable ICT levels** — needs FVG+OB overlap or FVG+OTE (standalone FVG requires OTE zone for futures; standalone OB filtered out for futures)
-6. **Minimum 2:1 R:R**
-7. **Session-end close** (non-crypto) — all positions force-closed at 4 PM ET (day trades only, no overnight holds). SL/TP fills are checked BEFORE session-end so real fills take priority over synthetic close.
+6. **R:R veto** — `min_rr_ratio` (default 2.0) rejects a setup whose target is too
+   close. It never moves a target. ICT sets the target from liquidity and lets R:R fall
+   out, so `_find_take_profit` picks a liquidity level (`tp_min_r`, `tp_selection`) and
+   only falls back to a fixed multiple when `tp_fallback_r` is set — with
+   `tp_fallback_r: None` a setup with no liquidity to aim at is simply skipped. The
+   default 3.0 fallback accounted for 88 of 95 trades in a real run, so the strategy
+   was mostly targeting a multiple of its own stop.
+7. **Session-end close** (non-crypto) — all positions force-closed during the 4-5 PM ET hour (day trades only, no overnight holds). The check is bounded to that hour; an unbounded `hour >= 16` would also fire all evening and close trades one bar after entry. SL/TP fills are checked BEFORE session-end so real fills take priority over synthetic close.
 
 Crypto tickers (detected by `is_crypto()` or `--ticker BTC-USD`) bypass kill zone/dead zone/session-end rules.
 
@@ -204,8 +279,11 @@ Enforced in `trading/risk.py`:
 - SL bounds: 0.1-5% from entry (stocks/crypto) or 2-50 points (futures)
 - Per-asset SL ATR multiplier (`config.SL_ATR_MULTIPLIER`): ES=0.5, BTC=1.5, etc.
 - 10% drawdown from peak = circuit breaker (latching — halts all trading, force-closes open positions)
-- Position sizing: `risk_amount / sl_distance` (stocks/crypto), `floor(risk_amount / (sl_points * point_value))` integer contracts (futures)
-- Configurable spread/slippage modeling (`config.SPREAD_POINTS`, `config.SLIPPAGE_POINTS`) — defaults to 0, set nonzero for realistic backtests
+- Position sizing: `risk_amount / sl_distance` (stocks/crypto), `floor(risk_amount / (sl_points * point_value))` whole contracts (futures). Point values live in `config.POINT_VALUES` (ES=$50, MES=$5). A stop too wide to afford one contract opens no position — `open_position()` returns `None` and the engine counts it as `unaffordable_skips`.
+- Trading costs are on by default: `SPREAD_POINTS = 0.50`, `SLIPPAGE_POINTS = 0.25`, `COMMISSION_PER_CONTRACT = 1.25`. **Every fill** — entry, SL, TP, and manual closes — pays `SPREAD_POINTS/2 + SLIPPAGE_POINTS` against the position, so a round turn costs 1.00 point plus commission ($51.25/contract on ES). Set them to 0 to compare against gross.
+- Each trade records `gross_pnl` and `costs`, and `gross_pnl - costs == pnl_dollars` holds by construction. Do not reintroduce a path that closes a position without going through `_apply_slippage` — session-end closes used to bypass it, making 19% of exits free, and because only net P&L was stored nobody could see it.
+- Cost drag as a share of R is `~1.02 / stop_points` and is **independent of position size**, since commission, spread and slippage all scale with contracts exactly as risk does. At a 10-point ES stop that is ~10% of R, which is the binding constraint on any high-frequency configuration.
+- Max drawdown is marked to market every bar (`Account.mark_equity`), so it includes open positions. The circuit breaker reads the same figure.
 
 ## Trade Management
 
@@ -234,7 +312,7 @@ When `TRADE_MANAGEMENT_ENABLED = True` in config (default: False):
 | Source | Used For | Auth |
 |--------|----------|------|
 | Interactive Brokers | Live OHLC + order execution + historical download | Local TCP (TWS/Gateway) |
-| Databento CSV | Historical backtesting (1m OHLCV) | Downloaded files |
+| Databento DBN or CSV | Historical backtesting (1m OHLCV) | Downloaded files |
 
 The `data/historical.py` loader auto-detects CSV format: Databento (has `ts_event`/`symbol` columns, needs contract stitching) vs IBKR/simple (has `timestamp` directly, single continuous series).
 
@@ -260,6 +338,20 @@ Futures use base symbol (e.g. "MES", "ES"). The `is_futures()` helper in `config
 
 ## Historical Data Format
 
+**Databento DBN** (`.dbn`, `.dbn.zst`): the preferred format. Databento meters by uncompressed binary size whatever the encoding, so DBN costs the same as CSV and avoids CSV's 9-decimal price padding. Needs `pip install databento`. `load_continuous_contract()` dispatches on the extension and reads it through `DBNStore.to_df()`.
+
 **Databento CSV**: columns `ts_event, rtype, publisher_id, instrument_id, open, high, low, close, volume, symbol`. The loader handles contract stitching (ES roll dates), spread symbol filtering, and resampling.
+
+Both Databento paths stamp `ts_event` at the **start** of the interval, which is what `resample_ohlcv()` expects — it applies the bar-close shift itself.
+
+**Contract rolls are derived from the data, not a table.** `front_month_schedule()` ranks contracts by their last observed bar (which is their expiry), then picks whichever traded the most volume each session day, latched so a thin day cannot roll backwards. Older contracts are then back-adjusted (Panama) so the ~50-point roll step does not read as an FVG. Measured dates match CME's published customary roll dates exactly.
+
+Do not reintroduce symbol parsing to order contracts. ES uses one-digit year codes (`ESM5` could be 2025 or 2035), CME has begun issuing two-digit ones (`NGN25`), and expiry is not always the third Friday — ESM6 expires 2026-06-18 because 2026-06-19 is Juneteenth.
+
+`session_day()` maps a bar to its CME trading day (18:00 ET open, so the Sunday evening session belongs to Monday). It shifts **naive ET wall-clock**, never a tz-aware timestamp: absolute-time arithmetic drags Sunday-evening bars onto Saturday at every spring-forward and invents a Saturday session that does not exist.
+
+Databento omits minutes with no trade, so a resampled series is not evenly spaced. Detectors that assume contiguous bars (the 3-candle FVG, swing confirm-bars) can pair bars across a weekend or the daily halt. Measured on real front-month ES this is minor — 42 gaps of 1 to 60 minutes in a year — and backtests report `trades_after_break` so the effect stays visible.
+
+A parent-symbol request (`ES.FUT`) returns calendar spreads alongside outrights — 13.8% of records in the 5-year file. The loader drops symbols containing `-` and then drops any bar with a non-positive price, because CME's user-defined spreads do not always join their legs with `-` and spread prices go negative.
 
 **IBKR CSV** (from `download-history`): columns `timestamp, open, high, low, close, volume`. Timestamps are timezone-aware (CT offsets), converted to UTC on load. The download anchors at 5 PM ET session close to capture full 23-hour trading days.

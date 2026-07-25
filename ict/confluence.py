@@ -301,92 +301,133 @@ def _find_ote_from_swings(swings: list, bias: str) -> dict:
 # ICT Daily Bias Determination
 # ---------------------------------------------------------------------------
 
+def bias_factors(
+    bias_analysis: dict,
+    swing_analysis: dict,
+    entry_analysis: dict,
+) -> dict:
+    """Score each ICT bias factor independently.
+
+    Returns {factor_name: "bullish" | "bearish" | None}, where None means the
+    factor abstains. Split out from determine_ict_bias so a factor's vote rate
+    can be measured directly — a silently abstaining factor turns an "N of M"
+    rule into unanimity without anyone noticing.
+    """
+    votes: dict[str, str | None] = {}
+
+    # --- Structure direction (BOS/CHoCH on daily, falling back to 4H) ---
+    structure = bias_analysis.get("bias", "neutral")
+    if structure == "neutral":
+        structure = swing_analysis.get("bias", "neutral")
+    votes["structure"] = structure if structure in ("bullish", "bearish") else None
+
+    # --- Liquidity draw: which side still holds unbroken external liquidity ---
+    votes["liquidity_draw"] = None
+    pdhl = entry_analysis.get("previous_high_low", {})
+    if pdhl:
+        pdh, pdl = pdhl.get("pdh"), pdhl.get("pdl")
+        pdh_broken = pdhl.get("pdh_broken", False)
+        pdl_broken = pdhl.get("pdl_broken", False)
+        current_price = entry_analysis.get("current_price", 0)
+
+        if pdh and not pdh_broken and pdl_broken:
+            votes["liquidity_draw"] = "bullish"   # sell side taken, draw above
+        elif pdl and not pdl_broken and pdh_broken:
+            votes["liquidity_draw"] = "bearish"   # buy side taken, draw below
+        elif pdh and pdl and not pdh_broken and not pdl_broken and current_price:
+            # Neither taken — the nearer pool is the likelier draw
+            if abs(current_price - pdh) < abs(current_price - pdl):
+                votes["liquidity_draw"] = "bullish"
+            elif abs(current_price - pdl) < abs(current_price - pdh):
+                votes["liquidity_draw"] = "bearish"
+
+    # --- Premium / discount position in the dealing range ---
+    pd_zone = bias_analysis.get("premium_discount", {})
+    if not pd_zone or pd_zone.get("zone") == "neutral":
+        pd_zone = swing_analysis.get("premium_discount", {})
+    zone = pd_zone.get("zone", "neutral")
+    votes["premium_discount"] = (
+        "bullish" if zone == "discount" else "bearish" if zone == "premium" else None
+    )
+
+    # --- Liquidity raid: which side was taken MOST RECENTLY ---
+    # Asking merely "has a side been swept?" across the whole window always
+    # answers yes for both — measured at 16 zones a bar with 88% swept — so the
+    # factor abstained on every single bar. ICT's question is which raid just
+    # happened, so compare the latest sweep on each side.
+    zones = entry_analysis.get("liquidity_zones", [])
+    last_sell = max(
+        (z.get("sweep_candle_index") for z in zones
+         if z.get("type") == "sell_side" and z.get("swept") and z.get("sweep_candle_index") is not None),
+        default=None,
+    )
+    last_buy = max(
+        (z.get("sweep_candle_index") for z in zones
+         if z.get("type") == "buy_side" and z.get("swept") and z.get("sweep_candle_index") is not None),
+        default=None,
+    )
+    if last_sell is not None and (last_buy is None or last_sell > last_buy):
+        votes["raid"] = "bullish"    # lows just taken, expect delivery up
+    elif last_buy is not None and (last_sell is None or last_buy > last_sell):
+        votes["raid"] = "bearish"    # highs just taken, expect delivery down
+    else:
+        votes["raid"] = None
+
+    return votes
+
+
 def determine_ict_bias(
     bias_analysis: dict,
     swing_analysis: dict,
     entry_analysis: dict,
 ) -> str:
-    """Determine daily bias using the full ICT methodology.
+    """Determine HTF bias by combining the ICT bias factors.
 
-    Four factors scored (each votes bullish or bearish):
-    1. Structure direction — daily BOS/CHoCH (fallback to 4H)
-    2. Liquidity draw target — which side has unbroken external liquidity?
-    3. Premium/discount — price position in the dealing range
-    4. Liquidity raid status — has one side already been swept?
+    Overridable per run via `backtest.params`:
+      bias_factors_used  — which factors vote (default all four)
+      bias_vote_rule     — "min_votes" (default), "majority" or "plurality"
+      bias_min_votes     — threshold for "min_votes" (default 3)
 
-    Requires 3+ factors aligned for a directional bias.
-    If 2-2 tie, structure direction breaks the tie.
-    If <2 either way, returns 'neutral'.
+    ICT treats premium/discount as *where* to enter inside an established bias,
+    not as *which way* to trade, so dropping it from the vote is the more
+    faithful reading. It stays in the default set for continuity and is meant to
+    be swept.
     """
-    bullish_votes = 0
-    bearish_votes = 0
+    from backtest import params
 
-    # --- Factor 1: Structure direction (existing BOS/CHoCH bias) ---
-    structure_bias = bias_analysis.get("bias", "neutral")
-    if structure_bias == "neutral":
-        structure_bias = swing_analysis.get("bias", "neutral")
-    if structure_bias == "bullish":
-        bullish_votes += 1
-    elif structure_bias == "bearish":
-        bearish_votes += 1
+    votes = bias_factors(bias_analysis, swing_analysis, entry_analysis)
+    used = params.get("bias_factors_used", tuple(votes))
+    rule = params.get("bias_vote_rule", "min_votes")
+    min_votes = params.get("bias_min_votes", 3)
 
-    # --- Factor 2: Liquidity draw target (PDH/PDL broken status) ---
-    pdhl = entry_analysis.get("previous_high_low", {})
-    if pdhl:
-        pdh_broken = pdhl.get("pdh_broken", False)
-        pdl_broken = pdhl.get("pdl_broken", False)
-        pdh = pdhl.get("pdh")
-        pdl = pdhl.get("pdl")
-        current_price = entry_analysis.get("current_price", 0)
+    bullish = sum(1 for f in used if votes.get(f) == "bullish")
+    bearish = sum(1 for f in used if votes.get(f) == "bearish")
+    structure = votes.get("structure") or "neutral"
 
-        if pdh and not pdh_broken and pdl_broken:
-            # Buy-side unbroken, sell-side taken → draw is above → bullish
-            bullish_votes += 1
-        elif pdl and not pdl_broken and pdh_broken:
-            # Sell-side unbroken, buy-side taken → draw is below → bearish
-            bearish_votes += 1
-        elif pdh and pdl and not pdh_broken and not pdl_broken and current_price:
-            # Both unbroken → nearer target is the likely draw
-            dist_high = abs(current_price - pdh) if pdh else float("inf")
-            dist_low = abs(current_price - pdl) if pdl else float("inf")
-            if dist_high < dist_low:
-                bullish_votes += 1
-            elif dist_low < dist_high:
-                bearish_votes += 1
+    if rule == "plurality":
+        # Any margin decides; only a dead heat is neutral.
+        if bullish > bearish:
+            return "bullish"
+        if bearish > bullish:
+            return "bearish"
+        return "neutral"
 
-    # --- Factor 3: Premium/discount context ---
-    # Use daily dealing range first, fallback to 4H
-    pd_zone = bias_analysis.get("premium_discount", {})
-    if not pd_zone or pd_zone.get("zone") == "neutral":
-        pd_zone = swing_analysis.get("premium_discount", {})
-    zone = pd_zone.get("zone", "neutral")
-    if zone == "discount":
-        bullish_votes += 1  # In discount → looking to buy
-    elif zone == "premium":
-        bearish_votes += 1  # In premium → looking to sell
+    if rule == "majority":
+        # More than half the factors that actually voted.
+        cast = bullish + bearish
+        if cast and bullish * 2 > cast:
+            return "bullish"
+        if cast and bearish * 2 > cast:
+            return "bearish"
+        return "neutral"
 
-    # --- Factor 4: Liquidity raid status ---
-    liquidity_zones = entry_analysis.get("liquidity_zones", [])
-    swept_sell = any(z.get("swept") for z in liquidity_zones if z.get("type") == "sell_side")
-    swept_buy = any(z.get("swept") for z in liquidity_zones if z.get("type") == "buy_side")
-
-    if swept_sell and not swept_buy:
-        # Sell-side raided (lows taken) → manipulation done → distribution up
-        bullish_votes += 1
-    elif swept_buy and not swept_sell:
-        # Buy-side raided (highs taken) → manipulation done → distribution down
-        bearish_votes += 1
-
-    # --- Final determination ---
-    # Requires 3+ factors aligned for directional bias
-    if bullish_votes >= 3:
+    # Default: an absolute number of aligned factors, with structure breaking ties.
+    if bullish >= min_votes:
         return "bullish"
-    if bearish_votes >= 3:
+    if bearish >= min_votes:
         return "bearish"
-    # 2-2 tie → structure direction breaks it
-    if bullish_votes == 2 and bearish_votes == 2:
-        return structure_bias
-    # Anything else (2-1, 2-0, 1-0, etc.) → insufficient alignment
+    if bullish == bearish and bullish > 0:
+        return structure
     return "neutral"
 
 

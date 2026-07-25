@@ -44,7 +44,14 @@ SMC_SWING_LENGTH = {
     "entry": 5,    # 15M: ~75 min window, responsive
 }
 
-# Smaller swing_length for backtesting (less warmup data required)
+# Smaller swing_length for backtesting (less warmup data required).
+#
+# WARNING: these differ from SMC_SWING_LENGTH above, so a backtest does not
+# validate the signals live trading will produce. Confirmation lag on the bias
+# timeframe differs 5x. Aligning them is blocked by warmup: swing_length=50
+# needs 2*50+1 = 101 daily bars, which is about 145 calendar days, but
+# HTF_WARMUP_DAYS is 90 (~64 daily bars). Either raise HTF_WARMUP_DAYS past 145
+# and use the live values here, or lower the live values to match these.
 BACKTEST_SMC_SWING_LENGTH = {
     "bias": 10,    # Daily: ~2 weeks each side (needs ~21 daily bars)
     "swing": 10,   # 4H: responsive
@@ -139,10 +146,24 @@ MES_POINT_VALUE = 5.0       # $5 per point
 MES_TICK_SIZE = 0.25         # Min tick = 0.25 points
 MES_TICK_VALUE = 1.25        # $1.25 per tick
 
+# Dollar value of one point, per contract. Non-futures trade one unit per
+# "contract", so they use 1.0 and the maths collapses to the stock case.
+POINT_VALUES = {
+    "ES": 50.0,
+    "MES": 5.0,
+    "NQ": 20.0,
+    "MNQ": 2.0,
+    "YM": 5.0,
+    "MYM": 0.5,
+    "RTY": 50.0,
+    "M2K": 5.0,
+}
+
 # Spread/slippage for backtesting (points, not percentage)
 # Set to 0.0 to disable (e.g. for unit tests)
-SPREAD_POINTS = 0.0          # Round-trip bid-ask spread in points (set 0.50 for ES backtests)
-SLIPPAGE_POINTS = 0.0        # Additional slippage per fill in points (set 0.25 for ES backtests)
+SPREAD_POINTS = 0.50         # Round-trip bid-ask spread in points (ES is 1 tick wide)
+SLIPPAGE_POINTS = 0.25       # Additional slippage per fill in points
+COMMISSION_PER_CONTRACT = 1.25  # Round-turn commission + fees, per contract
 
 # Monitor settings
 ANALYSIS_INTERVAL_MINUTES = 30  # How often to run ICT analysis
@@ -181,3 +202,13 @@ def is_futures(ticker: str) -> bool:
     # Strip trailing contract month/year codes like MES1!, MESH5, etc.
     base = ticker.upper().rstrip("!").rstrip("0123456789")
     return base in FUTURES_SYMBOLS
+
+
+def get_point_value(ticker: str) -> float:
+    """Dollar value of a one-point move, per contract.
+
+    Returns 1.0 for anything that is not a known futures contract, so stocks
+    and crypto keep the plain price-times-quantity maths.
+    """
+    base = ticker.upper().rstrip("!").rstrip("0123456789")
+    return POINT_VALUES.get(base, 1.0)

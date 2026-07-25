@@ -1,7 +1,433 @@
 # Backtest Results Log
 
-Comprehensive record of all backtesting experiments, configurations, and findings.
-Last updated: April 2026.
+Record of backtesting experiments, configurations, and findings.
+Last updated: July 2026.
+
+> ## Every result below experiment 14 is superseded
+>
+> A July 2026 audit found seven bugs that change P&L. Numbers recorded before
+> that date cannot be compared with numbers recorded after it, and the data
+> files they were produced from are no longer on disk. Treat them as history.
+>
+> What changed:
+>
+> 1. **Contract stitching dropped back-month bars into the series.** The
+>    front-month window was trimmed at one end only, so ESM5, ESU5 and ESZ5 all
+>    kept bars from before they were front month. Those bars shared timestamps
+>    with the true front month and the dedup picked between them with an
+>    unstable sort. Any run over the Databento multi-contract file mixed two
+>    contracts' prices.
+> 2. **Rolls are now back-adjusted** (Panama). Before, each roll left a raw
+>    calendar-spread step that the FVG and displacement detectors read as a gap.
+> 3. **Session-end close fired for eight hours, not one.** `hour >= 16` is true
+>    for ET hours 16 through 23, so positions opened in the evening were closed
+>    one bar later as `SESSION_END` stubs.
+> 4. **P&L had no contract multiplier.** Sizing was `risk$ / stop_points`,
+>    i.e. fractional contracts at $1 a point. ES is $50 and MES is $5. Futures
+>    now size to whole contracts, and a stop too wide to afford one contract is
+>    counted as `unaffordable_skips` instead of being traded.
+> 5. **Costs are on.** `SPREAD_POINTS = 0.50`, `SLIPPAGE_POINTS = 0.25`,
+>    `COMMISSION_PER_CONTRACT = 1.25`. Everything above is gross of all three.
+> 6. **Max drawdown is marked to market every bar.** It used to be derived from
+>    an equity curve with one point per fill, so open-trade losses were invisible.
+>    The circuit breaker now reads unrealized loss too.
+> 7. **Daily and 4H bars follow the CME session.** They were anchored to UTC
+>    midnight, so a "daily" bar closed at 19:00 ET in winter and 20:00 ET in
+>    summer against a trading day that runs 18:00 to 17:00 ET. PDH/PDL, daily
+>    bias and premium/discount were all computed across two sessions.
+>
+> Backtests also run about 4x faster — see the entry below.
+
+---
+
+## Experiment 18 — Cost model fixed; the edge does not survive it (July 2026)
+
+Configurations tried to date: **20**.
+
+### Three defects in the cost model
+
+Experiment 17 claimed "the entry signal works but costs eat exactly all of it".
+Re-checking it found the claim was wrong in both directions, and the reason it went
+unnoticed was that **the engine recorded only net P&L** — so the conclusion had to be
+inferred from arithmetic rather than measured.
+
+| Defect | Effect |
+|---|---|
+| Exit leg never paid the spread | Entry paid `SPREAD/2`, exit paid only slippage, under-charging 0.25 pt every trade |
+| `close_position_manual` bypassed costs entirely | SESSION_END, circuit-breaker and backtest-end exits were free — 19% of exits |
+| Nothing recorded what a round trip paid | The claim could not be checked |
+
+Now every fill pays `SPREAD_POINTS / 2 + SLIPPAGE_POINTS`, so a round turn costs
+1.00 point plus $1.25 commission — **$51.25 a contract on ES**. Manual closes go
+through the same path. Each trade records `gross_pnl` and `costs`, and
+`gross_pnl - costs == pnl_dollars` reconciles exactly on every cell.
+
+Measured cost is **$89-102 per trade** at a mean 1.89 contracts, which is ~11% of R
+and matches the `1.02 / stop_points` formula.
+
+### The corrected result: the edge does not clear the bar
+
+Same six bias cells, same 2021-07 to 2024-12 span, correct costs:
+
+| Cell | n | Win rate | Coin-flip | Edge | z | Gross | Costs | Net | Max DD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| all4_majority | 1010 | 37.8% | 34.5% | +3.3 | 2.21 | +$43.4k | $92.3k | -$48.8k | 61% |
+| all4_v3 | 961 | 38.0% | 34.9% | +3.1 | 2.02 | +$47.7k | $91.1k | -$43.4k | 59% |
+| no_pd_plurality | 878 | 35.8% | 34.1% | +1.7 | 1.06 | +$22.6k | $74.9k | -$52.3k | 66% |
+| no_pd_v2 | 888 | 35.9% | 34.2% | +1.7 | 1.07 | +$25.5k | $75.6k | -$50.1k | 66% |
+| no_pd_v3 | 568 | 36.3% | 35.2% | +1.1 | 0.55 | +$16.1k | $53.2k | -$37.2k | 49% |
+| struct_liq_v2 | 618 | 35.6% | 35.0% | +0.6 | 0.31 | -$3.4k | $51.7k | -$55.1k | 56% |
+
+**The edge shrank from z = 3.07-4.29 to z = 0.31-2.21.** Nothing clears the t > 3 bar
+for a data-mined result, and only two cells clear even t > 2.
+
+The mechanism is exactly the one flagged as a risk: charging the exit leg flips
+trades that exited near breakeven into losses, and `calc_stats` classifies wins by
+`pnl_dollars > 0`. Win rate fell 40.2% to 37.8% on the best cell while its coin-flip
+benchmark barely moved. **So part of the apparently significant edge in experiment 17
+was an artefact of under-charged costs.**
+
+### Where the money goes
+
+Gross is positive on five of six cells, at $16k to $48k over 3.5 years. Costs are
+$52k to $92k — **two to four times the gross edge.**
+
+Gross expectancy on the best cell is $43.4k / 1010 = **$43 a trade**, about 4.8% of
+R. Costs are ~11% of R. So the gross edge is under half of what it costs to collect.
+
+### Net P&L by year — it is not one bad regime
+
+| Cell | 2021 | 2022 | 2023 | 2024 |
+|---|---:|---:|---:|---:|
+| all4_majority | +1,035 | +11,358 | **-52,515** | -8,710 |
+| all4_v3 | +14,316 | -15,356 | **-26,148** | -16,179 |
+| no_pd_plurality | +11,647 | -19,968 | **-38,497** | -5,482 |
+| no_pd_v2 | +15,887 | -23,214 | **-39,014** | -3,742 |
+| no_pd_v3 | +5,456 | +14,194 | **-41,064** | -15,761 |
+| struct_liq_v2 | -5,036 | -10,674 | **-25,305** | -14,102 |
+
+2023 is worst but **2024 is negative for all six as well**, and only 2021 is broadly
+positive. This is not a single-regime problem.
+
+### The 2023 screen: no edge at all, even gross
+
+The new screening span (2023 only, ~330 trades a cell, ~6 min) gives z between
+**-1.06 and +0.30** on all six cells — indistinguishable from a coin flip — with
+gross P&L between -$14.8k and +$6.8k. On the hardest year there is nothing for costs
+to consume.
+
+One surprise: **SESSION_END exits are profitable** on every cell, +$775 to +$8,075.
+The forced 16:00 ET close is not the leak. The stop-to-target ratio is: the best cell
+took 180 stops for -$153k against 92 targets for +$118k.
+
+### What this means for direction
+
+The binding arithmetic is `cost_share_of_R = 1.02 / stop_points`. At a 9-10 point
+stop that is 11%, and gross expectancy is 4.8%. Two ways out, both testable:
+
+1. **Roughly triple R per trade.** A 30-point stop puts costs at 3.4% of R instead of
+   11%. The `geometry` sweep has a `liq_only_tight_stop` cell but **no wide-stop
+   cell** — that is the obvious gap to fill next.
+2. **Roughly triple the gross edge per trade**, which means better selection rather
+   than better geometry. 350 trades a year is not a selective ICT model.
+
+Screening should now run on 2023 by default (`--span screen`), since a config that
+cannot clear a coin flip there is not worth a 25-minute confirmation run.
+
+---
+
+## Experiment 17 — Bias fix and the first real sweep (July 2026)
+
+Results now live in `logs/experiments.jsonl`, one line per cell, and
+`py main.py sweep-report` generates the ranking. This entry is the narrative; the
+store is the data. Configurations tried to date: **8**.
+
+### Two bugs in the bias function
+
+`determine_ict_bias` produced a directional bias on about **1% of bars** and
+returned **bullish zero times across 2025**, a year ES rose. It blocked 88.7% of
+all bars, so nothing downstream could be measured.
+
+1. **The raid factor abstained on every single bar** — 2,939 consecutive samples.
+   It asked whether either side had been swept anywhere in the 200-bar window;
+   with ~16 liquidity zones a bar at ~88% swept, the answer was always "both", so
+   `swept_sell and not swept_buy` was never true. "3 of 4 aligned" was really
+   unanimity. It now compares which side was swept **most recently**.
+2. **Premium/discount votes bearish 97% of the time** in a rising market, so as a
+   *direction* vote it is a standing short bias. ICT uses premium/discount to
+   decide where to enter inside a bias, not which way to trade. It is now
+   optional via `bias_factors_used`.
+
+Fixing the raid factor alone moved bias from 1% to **44% directional**.
+
+### Sweep: bias vote rules, 2021-07-25 to 2024-12-31, 15m
+
+Geometry held at the ICT-faithful setting (liquidity-only targets, no 3R
+fallback, R:R as a veto at 1.0). Circuit breaker off so the whole span is
+measured.
+
+> **P&L columns superseded by experiment 18** — this run under-charged costs.
+> Trade counts, win rates and the edge over the benchmark are unaffected, because
+> costs move P&L, not which barrier was hit first.
+
+| Cell | Trades | Long/Short | Win rate | Coin-flip | Edge | z | PF | Return | Max DD |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| all4_majority | 1233 | 507/726 | 40.2% | 34.4% | **+5.8** | **4.29** | 1.00 | -1.9% | 45.7% |
+| all4_v3 | 1036 | 448/588 | 39.0% | 34.2% | +4.8 | 3.26 | 0.97 | -14.7% | 45.7% |
+| no_pd_plurality | 1103 | 523/580 | 38.6% | 34.0% | +4.6 | 3.23 | 0.97 | -16.0% | 45.6% |
+| no_pd_v2 | 1090 | 530/560 | 38.4% | 34.0% | +4.4 | 3.07 | 0.97 | -15.7% | 49.4% |
+| no_pd_v3 | 595 | 370/225 | 36.5% | 34.4% | +2.1 | 1.08 | 0.92 | -24.0% | 45.0% |
+| struct_liq_v2 | 723 | 410/313 | 36.2% | 34.5% | +1.7 | 0.96 | 0.88 | -37.5% | 45.8% |
+
+"Coin-flip" is `stop / (stop + target)` — the win rate a random walk gives for
+that cell's own geometry. It is the only fair basis for comparing win rates
+across different geometries.
+
+### The good news: the entry signal now carries positive information
+
+The old default sat **7.7 points below** its coin-flip benchmark, which is
+anti-information. Four of six variants now sit **4.4 to 5.8 points above** it, at
+z = 3.07 to 4.29. That clears the t > 3 bar Harvey/Liu/Zhu recommend for
+data-mined results, and with only 8 configurations tried the multiple-testing
+burden is small.
+
+Long and short counts are now balanced and both sides win at similar rates
+(37-42%), so the one-sided bias is gone.
+
+### The bad news: costs — but the arithmetic below was WRONG, see experiment 18
+
+> **Superseded.** The reasoning in this section was checked and does not hold, and
+> the cost model it described was not what the code charged. The P&L figures in the
+> table above are from a run that under-charged costs by roughly $33,000. Corrected
+> numbers are in experiment 18. Kept here because the error is instructive.
+
+What was published: "+5.8 points of win rate at 1.84 R:R gives +0.10R per trade;
+1R is 11 ES points = $550; costs are ~$51 a contract = 9.3% of R; 1233 x $51 ≈
+$63k of costs against ~$67k of gross edge."
+
+Three things were wrong. The code charged **$26.25** a contract, not $51 — the
+exit leg never paid the spread and manual closes paid nothing. The mean trade is
+**1.89 contracts**, so 1R is nearer **$870** than $549, and a per-contract figure
+was being applied per trade. And the naive win/loss expectancy model ignores that
+19% of exits are forced session-end closes at neither barrier, so it predicts
++$97k of gross against an actual net of -$1.9k.
+
+The aggregate looked plausible only because two errors partly cancelled.
+
+**The one part that survives:** cost drag as a share of R is `~1.02 / stop_points`,
+independent of position size, because commission, spread and slippage all scale
+with contracts exactly as risk does. That describes the *intended* model, which is
+what experiment 18 implements — the code simply was not charging it.
+
+**Root cause: the engine recorded only net P&L.** Nothing stored what a round trip
+paid, so the claim had to be inferred instead of measured. That is now fixed —
+every trade records `gross_pnl` and `costs`, and `gross_pnl - costs == pnl_dollars`
+holds by construction.
+
+### 2023 is the killer, and it is not the 2022 bear market
+
+Yearly P&L, all six cells:
+
+| Cell | 2021 | 2022 | 2023 | 2024 |
+|---|---:|---:|---:|---:|
+| all4_majority | +6,220 | +23,480 | **-38,216** | +6,662 |
+| all4_v3 | +16,827 | -5,047 | **-26,386** | -139 |
+| no_pd_plurality | +13,977 | +312 | **-39,617** | +9,320 |
+| no_pd_v2 | +21,101 | -8,078 | **-41,685** | +12,945 |
+| no_pd_v3 | +6,917 | +18,506 | **-35,195** | -14,253 |
+| struct_liq_v2 | -2,911 | -12,020 | -9,010 | -13,526 |
+
+Every variant collapses in 2023 and most are positive in 2021 and 2024. 2023 was
+a grinding low-volatility uptrend in ES, which is the regime a sweep-and-reverse
+method should struggle in. This looks like a real regime dependency, not noise.
+
+### What to focus on
+
+1. **Cost per trade against R.** This is the binding constraint. Costs are 9.3%
+   of R at an 11-point stop; below ~5% needs a stop above 20 points, or many
+   fewer trades. Test both, and test MES to see whether the smaller contract
+   changes the ratio.
+2. **The 2023 regime.** Find what breaks. A trend filter is the obvious
+   hypothesis — if the method is counter-trend by construction, it needs to stand
+   aside in a grind.
+3. **Selectivity.** ~350 trades a year is not an ICT model. Filtering to the best
+   setups cuts total cost drag directly. `score_slope` is now mildly positive on
+   most cells, so a higher `min_score` is worth a sweep.
+4. **Drawdown.** 45-49% on every cell, with the breaker off. Even a profitable
+   version is untradeable at that level; concurrent-position and sizing rules
+   need their own sweep.
+
+### What to drop
+
+- **`struct_liq_v2`** (z=0.96, -37.5%) and **`no_pd_v3`** (z=1.08, -24.0%). Both
+  fail significance and lose the most. Structure plus liquidity draw alone is too
+  thin, and requiring 3 of 3 is too strict.
+- **Not yet resolved:** whether premium/discount belongs in the vote. The `all4_*`
+  cells that keep it rank marginally higher, but the `no_pd_*` cells are better
+  balanced long/short. Keep both arms in future sweeps.
+
+### Causality verified on real data
+
+The 22 synthetic causality tests now also run against real ES bars, and finding
+the right invariant was itself informative. **Full incremental stability does not
+hold**: appending 200 bars to a 700-bar window erased 1 swing, 1 BOS and 3 order
+blocks. That is legitimate invalidation — live trading sees the same revision.
+
+What does hold, and what "no look-ahead" actually means, is the asymmetry:
+**no signal is ever created at a settled past bar.** Later data may invalidate a
+signal but never reveals one retroactively. The confirmation-lag boundary
+measured 8 bars, so the tests exclude a 15-bar margin and assert no creation
+before it.
+
+---
+
+## Experiment 16 — First run on real ES data (July 2026)
+
+Dataset: `historical/ES-5y/glbx-mdp3-20210724-20260723.ohlcv-1m.dbn.zst`, Databento
+GLBX.MDP3 `ohlcv-1m`, `ES.FUT` parent symbology, 2021-07-25 to 2026-07-23. 2,826,688
+records, 1,769,803 front-month bars after dropping spreads and stitching. Validated with
+`py main.py validate-data` — see *Dataset validation* below.
+
+**The strategy loses money on real ES data.** Every earlier positive number in this file
+came from a synthetic random walk.
+
+Default strategy, 15m entry, `--min-score 60`, 2025 calendar year:
+
+| | As shipped | Circuit breaker disabled (probe) |
+|---|---:|---:|
+| Trades | 17 | 114 |
+| Win rate | 17.6% | **13.2%** |
+| Profit factor | 0.19 | 0.32 |
+| Net P&L | -$7,677 (-7.7%) | **-$40,048 (-40.0%)** |
+| Max drawdown | 10.1% | 43.7% |
+| Max loss streak | 9 | 24 |
+| Losing months | 2 of 2 | 9 of 11 |
+
+As shipped, the latching circuit breaker fires on **2025-02-05** at 10.1% drawdown and
+blocks the remaining eleven months, so the run reports only 17 trades. Raising the limit
+in-process (a probe, nothing on disk changed) shows the rest of the year: 99 losses in 114
+trades.
+
+**This is not one bad month.** It loses in nine of eleven months.
+
+Diagnosis so far, measured on 2025 data:
+
+- Median stop 14.12 points, median target 33.25 points — about 2.35:1, as `MIN_RR_RATIO`
+  demands.
+- Median 15m ATR is 5.93 points and the median 15m bar range is 5.25 points.
+- So the stop sits at **2.4x ATR** — it is *not* too tight — while the target sits at
+  **5.6x ATR**.
+- Reaching a 5.6-ATR target without first retracing 2.4 ATR is a demanding ask on a 15m
+  chart, and 87% of trades hit the stop instead.
+- Break-even at 2.35:1 needs roughly a 30% win rate. The strategy gets 13%.
+
+Either the entry has no directional edge, or the stop-and-target geometry is wrong for
+15m ES. That needs its own investigation; it is not a data problem.
+
+Two side notes: only **5 setups** were skipped for a stop too wide to afford one ES
+contract, and only **1 of 17 trades** entered on a bar that opened after a session break,
+so neither of those is the issue.
+
+**The latching circuit breaker makes multi-year research runs uninformative** — you see
+nothing past the first 10% drawdown. Worth a separate switch for research runs.
+
+### Dataset validation
+
+`py main.py validate-data <file>` reports:
+
+- Integrity clean across all 2,826,688 records — no `high < low`, no open or close outside
+  the bar, no non-positive volume, no duplicate keys, no nulls.
+- Zero Saturday bars. CME's own trading-hours page notes Saturday hours are "for internal
+  testing only".
+- 41 short sessions of 1,293, all explained: 40 early closes, 1 thin holiday. **Zero
+  unexplained.**
+- 301 gaps over an hour, all classified: 252 weekend, 38 holiday, 6 extended holiday, 5
+  weekend plus holiday.
+- One anomaly: a single flat bar inside the 17:00 ET maintenance halt at **2023-10-30**,
+  volume 3000. One bar in 1.77 million.
+- `condition.json`: 9 degraded days, of which 8 are complete anyway. **2025-11-28** is the
+  only material one — 510 bars missing, no overnight session.
+
+### Roll dates now match CME exactly
+
+The roll is derived from daily traded volume rather than a hardcoded table. All six dates
+that overlap CME's published [Equity Index Roll Dates](https://www.cmegroup.com/trading/equity-index/rolldates.html)
+match its "customary roll date" column:
+
+| Contract | Measured | CME customary roll |
+|---|---|---|
+| ESH5 | 2025-03-17 | 2025-03-17 |
+| ESM5 | 2025-06-16 | 2025-06-16 |
+| ESU5 | 2025-09-15 | 2025-09-15 |
+| ESZ5 | 2025-12-15 | 2025-12-15 |
+| ESH6 | 2026-03-16 | 2026-03-16 |
+| ESM6 | 2026-06-15 | 2026-06-15 |
+
+The retired `ES_ROLL_DATES` table was 4 days early on all four rolls it covered. CME's rule
+is "the Monday prior to the third Friday" — 4 days before expiry, not the 8 the old comment
+assumed.
+
+**ESM6 is why symbols must not be parsed.** Its expiry is 2026-06-18, not the third Friday
+(2026-06-19), because that Friday is Juneteenth. Ordering contracts by last observed bar
+sidesteps this and the one-digit-year ambiguity (`ESM5` could be 2025 or 2035) together.
+
+### Warning: CME normalization changes 2026-08-08
+
+Databento is [replacing its CME normalization](https://databento.com/blog/cme-normalization-changes-2026-07)
+on **2026-08-08**, and the change applies **retroactively to the full historical dataset**.
+Definition records will publish one row per strategy leg instead of one per strategy. The
+`ohlcv-1m` record layout is unchanged, so this dataset should be unaffected, but pin this
+snapshot and re-validate after the cutover before comparing new results with these.
+
+---
+
+## Experiment 15 — Audit fixes and adapter rewrite (July 2026)
+
+Same input, same settings, before and after the seven fixes. Run on
+`historical/SYNTH-ES.csv`, `--entry-tf 15min`, `--min-score 60`, 8,437 bars.
+
+| Metric | Before | After |
+|---|---:|---:|
+| Trades | 38 | 15 |
+| Win rate | 34.2% | 26.7% |
+| Profit factor | 0.49 | 0.66 |
+| Net P&L | -$8,279.93 | -$2,224.62 |
+| Max drawdown | 10.86% (realized only) | 7.93% (marked to market) |
+| Avg R:R | 0.63 | 0.99 |
+| Skipped, stop too wide | n/a | 90 |
+| **Run time** | **364.8 s** | **88.8 s** |
+| **Per bar** | **43.24 ms** | **10.53 ms** |
+
+The trade count falls because the evening `SESSION_END` stubs are gone and 90
+setups now have stops too wide to afford a single ES contract.
+
+Same fixes at `--entry-tf 5min` over the same file: 25,409 bars, 312.5 s,
+**12.30 ms/bar**, 69 trades, 37.7% win rate, PF 1.14, 10.2% max drawdown, 150
+skipped for a too-wide stop. That puts a full year at 5m entry near **21
+minutes**, against roughly 77 before.
+
+**This is synthetic data.** `historical/SYNTH-ES.csv` is a random walk with no
+weekend gap, no daily halt and no holidays. It exercises the engine, not the
+strategy — the P&L above says nothing about whether the strategy works.
+
+### Where the speed came from
+
+Profiling showed 684,000 Python calls per bar. `ict/smc_patched.py` is already
+vectorized and accounted for 13% of the time; about 85% went to
+`ict/smc_adapter.py` converting the vectorized output into dicts one cell at a
+time with `result["BOS"].iloc[i]` inside a loop over every row. That rebuilds
+the column on each pass — 903,565 `DataFrame.__getitem__` calls per 200 bars —
+while the detector output is only 1-14% dense.
+
+The five conversion loops and `ict/displacement.py` now pull columns into numpy
+once and visit only the rows carrying a signal, via `np.flatnonzero`.
+`get_windowed_data` uses `searchsorted` instead of masking and copying the whole
+history every bar. Both are pure refactors: the trade list came back identical
+apart from the randomly generated position id.
+
+`vectorbt` was in `requirements.txt` and imported nowhere. It has been removed.
+It would not have helped — it vectorizes signal arrays over a price series, and
+ICT detection is path-dependent and stateful.
 
 ---
 
@@ -412,15 +838,69 @@ This was used as baseline for optimizer comparison.
 | Apr 11 | Kill zones OFF globally | ENFORCE_KILL_ZONES=False wired through backtest + live + CLI |
 | Apr 11 | ICT bias strict 3-of-4 rule | 2-1/2-0 splits now return neutral instead of directional |
 | Apr 11 | Optimizer fails on worker errors | No more silent zeroed results from crashed thresholds |
+| Jul 24 | Stitching trims both ends of each contract | Back-month bars no longer share timestamps with front month |
+| Jul 24 | Panama back-adjustment at rolls | Roll steps stop reading as FVGs |
+| Jul 24 | Stable sort before dedup | Stitching is deterministic across runs |
+| Jul 24 | Session-end close bounded to 16:00-17:00 ET | Evening trades no longer closed one bar after entry |
+| Jul 24 | POINT_VALUE in backtest P&L, whole contracts | Real ES/MES sizing; wide stops now skip instead of trading |
+| Jul 24 | Spread 0.50, slippage 0.25, commission 1.25 | Results are net of costs |
+| Jul 24 | Mark-to-market drawdown each bar | Max DD and circuit breaker see open positions |
+| Jul 24 | Daily/4H bars anchored to 18:00 ET session open | PDH/PDL and daily bias cover one CME session |
+| Jul 24 | smc_adapter + displacement vectorized | 43.24 -> 10.53 ms/bar, identical output |
+| Jul 24 | get_windowed_data uses searchsorted | Removes the O(n^2) term that grows with dataset size |
+| Jul 24 | Dropped vectorbt; added .dbn loader | Unused dependency removed; Databento DBN files load directly |
+| Jul 24 | Raid bias factor compares latest sweep per side | Was abstaining on 100% of bars; bias 1% -> 44% directional |
+| Jul 24 | Premium/discount vote made optional | Voted bearish 97% of the time in a rising market |
+| Jul 24 | Bias vote rule parameterised | min_votes / majority / plurality, sweepable |
+| Jul 24 | Targets liquidity-only, R:R demoted to a veto | 3R fallback had accounted for 88 of 95 trades |
+| Jul 24 | backtest/params.py override module | Config constants bind at import; sweeps were no-ops without this |
+| Jul 24 | backtest/experiments.py + sweeps.py + logs/experiments.jsonl | Append-only experiment store; ranking is generated, not typed |
+| Jul 24 | Rejection funnel recorded per run | The diagnostic that found the bias bug, now permanent |
+| Jul 24 | Causality tests run on real ES data | 188 -> 203 tests; invariant is 'no signal created', not 'nothing changes' |
+| Jul 24 | Every fill pays half-spread + slippage | Exit leg previously paid no spread; round turn now $51.25/contract on ES |
+| Jul 24 | Manual closes pay costs | SESSION_END / circuit-breaker / backtest-end exits were free, 19% of exits |
+| Jul 24 | gross_pnl and costs recorded per trade | 'costs ate the edge' is now measured, not inferred |
+| Jul 24 | P&L attributed by exit reason | Revealed SESSION_END exits are profitable, not the leak |
+| Jul 24 | 2023 screening span + --span flag | Screen in ~6 min/cell instead of ~21; adversarial regime |
+| Jul 24 | 203 -> 218 tests (cost model, overrides) | Cost identity gross - costs == net asserted on every exit path |
+| Jul 24 | Volume-derived contract roll | Replaces the 7-entry table; matches CME's customary roll dates exactly |
+| Jul 24 | Contracts ordered by last observed bar | No symbol parsing, so ESM6's Juneteenth expiry and 1-digit years are moot |
+| Jul 24 | session_day() on naive ET wall-clock | Kills the phantom Saturday session at each spring-forward |
+| Jul 24 | Non-positive price guard in the DBN loader | Catches UDS spreads whose symbols carry no "-" |
+| Jul 24 | main.py validate-data | Checks a Databento file's integrity and calendar before backtesting |
+| Jul 24 | Trades entered after a session gap counted | Measures how much the FVG/displacement gap concern actually matters |
 
 ---
 
 ## Future Improvements (TODO)
 
 - **OTE-refined FVG entry pricing** — Currently FVG+OTE entries use current market price. Should enter at the OTE sweet spot (70.5% fib) or FVG CE (50% midpoint) when FVG and OTE zone overlap. Would give tighter entries with better risk/reward.
-- **Spread/slippage validation** — Run backtests with realistic ES spread (0.50 pts) and slippage (0.25 pts) to see impact on P&L. Currently defaults to 0.
+- **Precompute PDH/PDL per session day** — `smc.previous_high_low` is **27% of every
+  entry bar** and throws away 99.9% of what it computes: it resamples the window to 1D
+  and 1W on every bar, then `smc_adapter.detect_previous_high_low` reads only eight
+  scalars off the last row. Those scalars change once a day and are recomputed ~96
+  times a day. Result-neutral, ~40 lines, **1.37x on every backtest** — more than the
+  single-pass sweep refactor would buy at current sweep sizes.
+- **Skip `recent_entry_candles` in backtests** — it is an `.iterrows()` over 20 rows
+  per bar, consumed only by `ai/prompt.py`. Free 2%.
+- **The entry lookback is set by file size, not by strategy** — `get_windowed_data`
+  picks 200/500/1000 bars from `len(all_timeframes["entry"])`, i.e. the length of the
+  whole file. The 5-year file always lands on 1000. It is a real strategy parameter
+  being chosen by accident, and shorter windows are ~2x faster; sweep it as
+  `entry_lookback` 200/500/1000 rather than leaving it implicit.
+- **Route `CONFLUENCE_WEIGHTS` through `params`** before making weights sweepable.
+  It is a dict bound by value at import (`ict/confluence.py`), so mutating it to sweep
+  weights would be process-global and `params.overrides` would not restore it — a leak
+  that is invisible under one-cell-per-process and corrupting under anything else.
+- **Add engine regression coverage** — 218 tests and none exercise `run_backtest` or
+  `_run_backtest_inner`. The fill / session-end / circuit-breaker ordering is
+  load-bearing and unguarded, which is where the cost bugs lived.
+- **Find out why the win rate is 13%** — see experiment 16. Stop at 2.4x ATR is reasonable; the 5.6x ATR target is rarely reached. Test a shorter target, a wider stop, or accept the entry has no edge on 15m ES.
+- **Add a research switch for the circuit breaker** — latching at 10% hides everything after the first drawdown, so a multi-year run reports two months.
+- **Align live and backtest swing lengths** — `SMC_SWING_LENGTH` uses bias=50, `BACKTEST_SMC_SWING_LENGTH` uses bias=10, so a backtest does not validate the signals live will produce. Aligning needs `HTF_WARMUP_DAYS` above 145 (101 daily bars for swing_length=50); it is 90 today.
+- **Guard detectors across data gaps** — measured on real data and it looks minor: only 1 of 17 trades entered after a session break, and front-month ES has near-complete minute coverage (42 gaps of 1-60 minutes in a year). Revisit only if the trade count grows.
 - **Regime detection** — Strategy excels in trending markets but struggles in choppy conditions. Add a volatility/regime filter to reduce position size or skip trades during ranging periods.
-- **Commission modeling** — IBKR charges ~$0.62/contract round-trip for MES. Not yet factored into backtest P&L.
+- **Calibrate spread and slippage against real quotes** — `SPREAD_POINTS`, `SLIPPAGE_POINTS` and `COMMISSION_PER_CONTRACT` are now applied but set from published figures, not measured. One week of Databento `tbbo` (every trade plus the quote before it) would give the spread actually paid, by session.
 - **Trade management tuning** — Test partial close at 25% instead of 50% at 1R to preserve more upside on winners while still getting breakeven protection.
 - **Multi-asset testing** — Run BTC-USD backtests with the new bias system and per-asset SL multipliers to validate crypto performance.
 - **Raise circuit breaker threshold** — Best config hits 10.9% max DD, exceeding the 10% circuit breaker. Consider 12-15% threshold for aggressive configs.

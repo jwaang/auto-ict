@@ -1,7 +1,14 @@
 .env
+.venv/
+venv/
 __pycache__/
 *.pyc
-logs/
+.pytest_cache/
+# logs/* rather than logs/ — git cannot un-ignore a file inside an ignored
+# directory, and the experiment store is the durable research record that must
+# accumulate across sessions.
+logs/*
+!logs/experiments.jsonl
 datasets/
 historical/
 .claude/

@@ -5,6 +5,7 @@ are reproducible and fast. The rules encode the same ICT methodology
 that the AI system prompt enforces.
 """
 
+from backtest import params
 from config import ENFORCE_KILL_ZONES, MIN_CONFLUENCE_SCORE, MIN_RR_RATIO, SL_ATR_MULTIPLIER, is_futures
 from ict.killzones import is_in_dead_zone, is_in_killzone, is_crypto
 
@@ -93,16 +94,23 @@ def decide_trade(ict_context: dict, min_score: int = MIN_CONFLUENCE_SCORE) -> di
         no_trade["reasoning"] = f"No valid {direction} levels found on entry TF"
         return no_trade
 
-    # Rule 5: Minimum R:R
+    if take_profit is None:
+        # tp_fallback_r disabled and no liquidity qualified as a target
+        no_trade["reasoning"] = "No liquidity target available"
+        return no_trade
+
+    # Rule 5: R:R veto. ICT sets the target from liquidity and lets R:R fall out,
+    # so this only rejects setups whose target is too close — it never moves one.
     risk = abs(entry_price - stop_loss)
     reward = abs(take_profit - entry_price)
     if risk == 0:
         no_trade["reasoning"] = "Zero risk distance"
         return no_trade
 
+    min_rr = params.get("min_rr_ratio", MIN_RR_RATIO)
     rr = reward / risk
-    if rr < MIN_RR_RATIO:
-        no_trade["reasoning"] = f"R:R {rr:.1f} < {MIN_RR_RATIO}"
+    if rr < min_rr:
+        no_trade["reasoning"] = f"R:R {rr:.1f} < {min_rr}"
         return no_trade
 
     return {
@@ -319,16 +327,28 @@ def _find_take_profit(
     entry_data: dict,
     setup_data: dict,
 ) -> float:
-    """Find TP from the NEAREST valid liquidity target.
+    """Find a take profit from the available liquidity targets.
 
-    Collects all candidate targets, sorts by distance (nearest first),
-    and returns the closest one meeting minimum 1R distance.
-    Falls back to 3R if no valid targets.
+    ICT targets liquidity and lets R:R fall out of it; none of his models set a
+    target from an R multiple. Overridable per run via `backtest.params`:
+
+      tp_min_r      — how far a candidate must sit to count, in R (default 1.0)
+      tp_selection  — "nearest" (default) or "furthest"
+      tp_fallback_r — R multiple to use when no liquidity qualifies
+                      (default 3.0; None means take no trade)
+
+    The default fallback dominated real runs: 88 of 95 trades used it, so the
+    strategy was mostly targeting a fixed multiple of its own stop.
+
+    Returns None when nothing qualifies and the fallback is disabled.
     """
+    from backtest import params
+
     risk = abs(entry - sl)
     if risk == 0:
         return entry
 
+    min_r = params.get("tp_min_r", 1.0)
     candidates = []
 
     # Collect liquidity targets
@@ -336,10 +356,10 @@ def _find_take_profit(
     for zone in liq_zones:
         level = zone.get("level", 0)
         if direction == "LONG" and zone.get("type") == "buy_side" and level > entry:
-            if (level - entry) / risk >= 1.0:
+            if (level - entry) / risk >= min_r:
                 candidates.append(level)
         elif direction == "SHORT" and zone.get("type") == "sell_side" and level < entry:
-            if (entry - level) / risk >= 1.0:
+            if (entry - level) / risk >= min_r:
                 candidates.append(level)
 
     # Collect PDH/PDL targets
@@ -347,21 +367,22 @@ def _find_take_profit(
     if direction == "LONG":
         for key in ("pdh", "pwh"):
             level = pdhl.get(key)
-            if level and level > entry and (level - entry) / risk >= 1.0:
+            if level and level > entry and (level - entry) / risk >= min_r:
                 candidates.append(level)
     else:
         for key in ("pdl", "pwl"):
             level = pdhl.get(key)
-            if level and level < entry and (entry - level) / risk >= 1.0:
+            if level and level < entry and (entry - level) / risk >= min_r:
                 candidates.append(level)
 
-    # Sort by distance from entry (nearest first) and pick closest
     if candidates:
         candidates.sort(key=lambda l: abs(l - entry))
-        return round(candidates[0], 2)
+        pick = candidates[-1] if params.get("tp_selection", "nearest") == "furthest" else candidates[0]
+        return round(pick, 2)
 
-    # Default: 3R target
+    fallback_r = params.get("tp_fallback_r", 3.0)
+    if fallback_r is None:
+        return None  # no liquidity to aim at, so no trade
     if direction == "LONG":
-        return round(entry + risk * 3, 2)
-    else:
-        return round(entry - risk * 3, 2)
+        return round(entry + risk * fallback_r, 2)
+    return round(entry - risk * fallback_r, 2)

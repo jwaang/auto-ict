@@ -164,15 +164,13 @@ class TestFVGCausality:
         # Bar 0 must be NaN (shifted forward, nothing before it)
         assert pd.isna(fvg["FVG"].iloc[0]), "Bar 0 should be NaN after causal shift"
 
-    def test_fvg_not_at_last_bar(self, ohlc_for_smc):
-        """The last bar cannot have an FVG because shift(-1) would read
-        beyond the data. After causal shift, the last possible FVG is
-        at bar n-1 (from middle candle at n-2, confirming candle at n-1)."""
+    def test_fvg_needs_three_closed_candles(self, ohlc_for_smc):
+        """An FVG is a 3-candle pattern reported on the third candle, so no
+        signal can appear before bar 2 — there are not enough closed candles."""
         fvg = smc.fvg(ohlc_for_smc)
         fvg_indices = np.where(~np.isnan(fvg["FVG"].values))[0]
-        # This is a soft check — last bar CAN have an FVG if bar n-2 was
-        # the middle candle and bar n-1 is the confirming candle
-        # The key invariant is incremental stability (next test)
+        early = [i for i in fvg_indices if i < 2]
+        assert not early, f"FVG signalled before 3 candles closed, at {early}"
 
     def test_fvg_incremental_stability(self, large_ohlc_for_smc):
         """Adding future data must not change FVGs detected at past bars."""
@@ -510,3 +508,127 @@ class TestSwingAlternation:
                 assert level >= ohlc["low"].min(), (
                     f"Swing low level {level} is below data min low"
                 )
+
+
+class TestCausalityOnRealData:
+    """Causality invariants checked against real ES bars.
+
+    Real data carries weekend gaps, the 17:00 ET maintenance halt, holidays,
+    contract rolls and DST transitions. A gapless synthetic random walk exercises
+    none of those, so an invariant that only holds there is not an invariant.
+
+    The invariant that matters is asymmetric. Appending bars may **erase** a past
+    signal, because later price action can invalidate a break or mitigate an
+    order block, and live trading sees exactly the same revision. Appending bars
+    must never **create** a signal at a bar that previously had none — that would
+    mean the detector needed future data to recognise it, which is look-ahead.
+
+    Measured on real ES: appending 200 bars to a 700-bar window erased 1 swing,
+    1 BOS and 3 order blocks, and created nothing.
+
+    One exception is legitimate and must be excluded: the last few bars of any
+    window are inside the confirmation lag. A swing needs `swing_length` bars to
+    confirm, and BOS and order blocks are built on swings, so a signal sitting at
+    the very end of a short window can only be recognised once those bars print.
+    Measured deepest creation is 8 bars before the cut with swing_length=5, so
+    CONFIRM_MARGIN bounds it with headroom. A creation deeper than the margin is
+    real look-ahead.
+
+    These skip when historical/ is absent, since it is gitignored.
+    """
+
+    SWING_LENGTH = 5
+    CONFIRM_MARGIN = 3 * SWING_LENGTH  # measured need is 8; 15 leaves headroom
+
+    @classmethod
+    def _assert_no_signal_created(cls, fn, ohlc, cols, cuts=(400, 700, 1000)):
+        for cut in cuts:
+            if cut + 200 > len(ohlc):
+                continue
+            settled = cut - cls.CONFIRM_MARGIN
+            short = fn(ohlc.iloc[:cut])
+            long = fn(ohlc.iloc[:cut + 200])
+            for col in cols:
+                a = short[col].to_numpy()
+                b = long[col].to_numpy()[:cut]
+                created = [
+                    i for i in range(settled)
+                    if pd.isna(a[i]) and not pd.isna(b[i])
+                ]
+                assert not created, (
+                    f"{col} appeared at settled bars {created[:5]} only after 200 "
+                    f"more bars were appended to a {cut}-bar window. Those bars sit "
+                    f"more than {cls.CONFIRM_MARGIN} before the cut, so this is not "
+                    f"confirmation lag — the detector used future data"
+                )
+
+    def test_swings_create_no_retroactive_signal(self, any_ohlc_for_smc):
+        self._assert_no_signal_created(
+            lambda d: smc.swing_highs_lows(d, swing_length=5),
+            any_ohlc_for_smc, ["HighLow", "Level"],
+        )
+
+    def test_fvg_creates_no_retroactive_signal(self, any_ohlc_for_smc):
+        self._assert_no_signal_created(
+            lambda d: smc.fvg(d, join_consecutive=False),
+            any_ohlc_for_smc, ["FVG", "Top", "Bottom"],
+        )
+
+    def test_bos_choch_creates_no_retroactive_signal(self, any_ohlc_for_smc):
+        def run(d):
+            return smc.bos_choch(d, smc.swing_highs_lows(d, swing_length=5), close_break=True)
+        self._assert_no_signal_created(run, any_ohlc_for_smc, ["BOS", "CHOCH", "Level"])
+
+    def test_order_blocks_create_no_retroactive_signal(self, any_ohlc_for_smc):
+        def run(d):
+            return smc.ob(d, smc.swing_highs_lows(d, swing_length=5), close_mitigation=False)
+        self._assert_no_signal_created(run, any_ohlc_for_smc, ["OB"])
+
+    def test_fvg_mitigation_is_forward_only(self, real_ohlc_for_smc):
+        """An FVG cannot be mitigated before it exists."""
+        res = smc.fvg(real_ohlc_for_smc, join_consecutive=False)
+        fvg = res["FVG"].to_numpy()
+        mit = res["MitigatedIndex"].to_numpy()
+        for i in np.flatnonzero(~np.isnan(fvg)):
+            if not np.isnan(mit[i]) and mit[i] != 0:
+                assert mit[i] > i, f"FVG at {i} mitigated at {mit[i]}, before it formed"
+
+    def test_bos_broken_index_is_forward_only(self, real_ohlc_for_smc):
+        """A structure break cannot be resolved before it is signalled."""
+        shl = smc.swing_highs_lows(real_ohlc_for_smc, swing_length=5)
+        res = smc.bos_choch(real_ohlc_for_smc, shl, close_break=True)
+        bos = res["BOS"].to_numpy()
+        choch = res["CHOCH"].to_numpy()
+        broken = res["BrokenIndex"].to_numpy()
+        live = ~(np.isnan(bos) & np.isnan(choch))
+        for i in np.flatnonzero(live):
+            if not np.isnan(broken[i]) and broken[i] != 0:
+                assert broken[i] > i, f"break at {i} resolved at {broken[i]}"
+
+    def test_windowed_data_never_leaks_future_bars(self):
+        """The engine window must never hold a bar closing after 'now'.
+
+        Run across a contract roll and a DST change, which the synthetic
+        fixtures cannot produce.
+        """
+        from tests.conftest import REAL_DATA
+        if not REAL_DATA.exists():
+            pytest.skip("real dataset not present")
+        from data.historical import (
+            build_multi_timeframe, get_windowed_data, load_continuous_contract,
+        )
+        df = load_continuous_contract(str(REAL_DATA))
+        df = df[(df["timestamp"] >= "2025-03-01") & (df["timestamp"] < "2025-04-15")]
+        all_tf = build_multi_timeframe(df, entry_tf="15min")
+        entry = all_tf["entry"]
+        checked = 0
+        for i in range(300, len(entry), 400):
+            now = entry["timestamp"].iloc[i]
+            for label, frame in get_windowed_data(all_tf, now).items():
+                if frame.empty:
+                    continue
+                assert frame["timestamp"].max() <= now, (
+                    f"{label} window holds a bar closing after {now}"
+                )
+                checked += 1
+        assert checked > 0, "no windows were checked"

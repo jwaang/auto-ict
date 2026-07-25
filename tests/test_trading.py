@@ -23,6 +23,21 @@ class TestAccount:
         size = acc.get_position_size(entry=100, stop_loss=90)
         assert size == 100.0
 
+    def test_position_size_uses_point_value(self):
+        acc = Account(starting_balance=100_000)
+        # 1% risk = $1000, 50-point stop on MES at $5/point = $250/contract → 4
+        size = acc.get_position_size(entry=5000, stop_loss=4950, point_value=5.0)
+        assert size == 4.0
+
+    def test_position_size_whole_contracts(self):
+        acc = Account(starting_balance=100_000)
+        # Same stop on ES at $50/point costs $2500/contract — more than the
+        # $1000 risk budget, so nothing can be traded.
+        size = acc.get_position_size(
+            entry=5000, stop_loss=4950, point_value=50.0, whole_units=True
+        )
+        assert size == 0.0
+
     def test_update_balance(self):
         acc = Account(starting_balance=100_000)
         acc.update_balance(500)
@@ -55,9 +70,13 @@ class TestPositionManager:
             "stop_loss": 4950,
             "take_profit": 5150,
         }
-        pos = pm.open_position(decision, acc, "ES")
+        pos = pm.open_position(decision, acc, "MES")
         assert pos.direction == "LONG"
         assert pos.status == "OPEN"
+        assert pos.point_value == 5.0
+        # Half the spread widens the stop to 50.25 points, so $1000 of risk at
+        # $5/point buys 3 whole contracts, not 4.
+        assert pos.quantity == 3.0
         assert pm.get_open_count() == 1
 
         # TP hit
@@ -65,6 +84,18 @@ class TestPositionManager:
         assert len(fills) == 1
         assert fills[0]["exit_reason"] == "TP_HIT"
         assert fills[0]["pnl_dollars"] > 0
+        assert pm.get_open_count() == 0
+
+    def test_stop_too_wide_returns_none(self):
+        acc = Account(starting_balance=100_000)
+        pm = PositionManager()
+        decision = {
+            "decision": "LONG",
+            "entry_price": 5000,
+            "stop_loss": 4950,  # 50 points on ES = $2500, over the $1000 budget
+            "take_profit": 5150,
+        }
+        assert pm.open_position(decision, acc, "ES") is None
         assert pm.get_open_count() == 0
 
     def test_sl_hit_short(self):
@@ -76,7 +107,8 @@ class TestPositionManager:
             "stop_loss": 5050,
             "take_profit": 4850,
         }
-        pos = pm.open_position(decision, acc, "ES")
+        pos = pm.open_position(decision, acc, "MES")
+        assert pos is not None
 
         fills = pm.check_fills({"high": 5060, "low": 4990})
         assert len(fills) == 1

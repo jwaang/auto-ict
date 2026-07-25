@@ -1,7 +1,6 @@
 """Analytics and reporting for backtest results.
 
 Generates statistics, equity curves, and trade summaries from BacktestResult.
-Uses vectorbt for advanced analytics when available, falls back to pandas.
 """
 
 import json
@@ -26,6 +25,11 @@ def calc_stats(result: BacktestResult) -> dict:
             "total_trades": 0,
             "bars_processed": result.bars_processed,
             "low_confluence_skips": result.low_confluence_skips,
+            "unaffordable_skips": result.unaffordable_skips,
+            "trades_after_break": result.trades_after_break,
+            "total_costs": 0.0,
+            "gross_pnl": 0.0,
+            "exit_reasons": {},
             "no_trade_decisions": result.no_trade_decisions,
             "duration_seconds": result.duration_seconds,
         }
@@ -36,14 +40,18 @@ def calc_stats(result: BacktestResult) -> dict:
     total_profit = sum(t["pnl_dollars"] for t in wins)
     total_loss = abs(sum(t["pnl_dollars"] for t in losses))
 
-    # Equity curve analysis
-    eq = pd.DataFrame(result.equity_curve)
-    if "balance" in eq.columns and len(eq) > 1:
-        peak = eq["balance"].expanding().max()
-        drawdown = (eq["balance"] - peak) / peak * 100
-        max_drawdown = abs(drawdown.min())
+    # Drawdown. The engine marks equity to market every bar, so prefer that —
+    # the equity curve only has a point per fill and misses open-trade losses.
+    if result.max_drawdown_pct:
+        max_drawdown = result.max_drawdown_pct
     else:
-        max_drawdown = 0
+        eq = pd.DataFrame(result.equity_curve)
+        if "balance" in eq.columns and len(eq) > 1:
+            peak = eq["balance"].expanding().max()
+            drawdown = (eq["balance"] - peak) / peak * 100
+            max_drawdown = abs(drawdown.min())
+        else:
+            max_drawdown = 0
 
     # R:R distribution
     rrs = [t["rr_achieved"] for t in closed if t.get("rr_achieved") is not None]
@@ -65,7 +73,19 @@ def calc_stats(result: BacktestResult) -> dict:
     net_pnl = total_profit - total_loss
     return_pct = (result.final_balance - result.starting_balance) / result.starting_balance * 100
 
+    # Costs, measured rather than inferred. Every trade records what its round
+    # trip paid away, so gross_pnl - costs == pnl_dollars by construction.
+    total_costs = sum(t.get("costs") or 0 for t in closed)
+    gross_pnl = sum(t.get("gross_pnl") or 0 for t in closed)
+
     return {
+        "total_costs": round(total_costs, 2),
+        "gross_pnl": round(gross_pnl, 2),
+        "cost_per_trade": round(total_costs / len(closed), 2) if closed else 0,
+        "cost_share_of_gross": (
+            round(total_costs / abs(gross_pnl) * 100, 1) if gross_pnl else None
+        ),
+        "exit_reasons": _calc_exit_reasons(closed),
         "starting_balance": result.starting_balance,
         "final_balance": result.final_balance,
         "net_pnl": round(net_pnl, 2),
@@ -90,6 +110,8 @@ def calc_stats(result: BacktestResult) -> dict:
         "avg_trade_duration": durations.get("avg", "N/A"),
         "bars_processed": result.bars_processed,
         "low_confluence_skips": result.low_confluence_skips,
+        "unaffordable_skips": result.unaffordable_skips,
+        "trades_after_break": result.trades_after_break,
         "no_trade_decisions": result.no_trade_decisions,
         "backtest_duration_seconds": result.duration_seconds,
         "period": f"{result.start_time[:10]} to {result.end_time[:10]}",
@@ -105,6 +127,7 @@ def print_report(result: BacktestResult):
         print("\n  No trades were executed during the backtest.")
         print(f"  Bars processed: {stats['bars_processed']}")
         print(f"  Low confluence skips: {stats['low_confluence_skips']}")
+        print(f"  Too-wide-stop skips: {stats['unaffordable_skips']}")
         print(f"  No-trade decisions: {stats['no_trade_decisions']}")
         return
 
@@ -121,6 +144,9 @@ def print_report(result: BacktestResult):
     print(f"  Net P&L:          ${stats['net_pnl']:>12,.2f} ({stats['return_pct']:+.1f}%)")
     print(f"  Max Drawdown:     {stats['max_drawdown_pct']:.1f}%")
     print(f"  Profit Factor:    {stats['profit_factor']}")
+    print(f"  Gross P&L:        ${stats.get('gross_pnl', 0):>12,.2f}")
+    print(f"  Costs:            ${stats.get('total_costs', 0):>12,.2f}"
+          f"  (${stats.get('cost_per_trade', 0):,.2f}/trade)")
     print(f"")
     print(f"  --- Trades ---")
     print(f"  Total Trades:     {stats['total_trades']}")
@@ -146,9 +172,17 @@ def print_report(result: BacktestResult):
         for month, ret in stats["monthly_returns"].items():
             print(f"  {month}:  ${ret:>10,.2f}")
 
+    if stats.get("exit_reasons"):
+        print(f"\n  --- Exit Reasons ---")
+        for reason, d in sorted(stats["exit_reasons"].items(), key=lambda kv: -kv[1]["n"]):
+            print(f"  {reason:16} {d['n']:>4} trades, {d['win_rate']:>5.1f}% WR, "
+                  f"${d['net_pnl']:>11,.2f}")
+
     print(f"\n  --- Engine Stats ---")
     print(f"  Bars Processed:   {stats['bars_processed']}")
     print(f"  Low Confluence:   {stats['low_confluence_skips']}")
+    print(f"  Stop Too Wide:    {stats['unaffordable_skips']}")
+    print(f"  After Session Gap: {stats['trades_after_break']} of {stats['total_trades']} trades")
     print(f"  No-Trade Rules:   {stats['no_trade_decisions']}")
     print(f"{'='*60}\n")
 
@@ -242,6 +276,26 @@ def generate_trade_log_csv(result: BacktestResult, filepath: str):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _calc_exit_reasons(closed: list[dict]) -> dict:
+    """Count and net P&L per exit reason.
+
+    Realised R:R lands well under the target R:R, and forced session-end exits
+    are the obvious suspect — they close at whatever price is there rather than
+    at either barrier, so they belong in their own bucket.
+    """
+    out: dict[str, dict] = {}
+    for trade in closed:
+        reason = trade.get("exit_reason") or "UNKNOWN"
+        bucket = out.setdefault(reason, {"n": 0, "net_pnl": 0.0, "wins": 0})
+        bucket["n"] += 1
+        pnl = trade.get("pnl_dollars") or 0
+        bucket["net_pnl"] = round(bucket["net_pnl"] + pnl, 2)
+        bucket["wins"] += 1 if pnl > 0 else 0
+    for bucket in out.values():
+        bucket["win_rate"] = round(bucket["wins"] / bucket["n"] * 100, 1)
+    return out
+
 
 def _max_streak(outcomes: list, target: int) -> int:
     """Find the longest consecutive streak of target value."""

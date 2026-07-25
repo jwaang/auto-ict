@@ -65,18 +65,18 @@ def detect_swings(ohlc: pd.DataFrame, tf_label: str) -> tuple:
     swing_length = get_swing_length(tf_label)
     shl = smc.swing_highs_lows(ohlc, swing_length=swing_length)
 
+    hl_arr = shl["HighLow"].to_numpy()
+    level_arr = shl["Level"].to_numpy()
+    index = ohlc.index
+
     swings = []
-    for i in range(len(shl)):
-        val = shl["HighLow"].iloc[i]
-        if pd.isna(val):
-            continue
-        level = float(shl["Level"].iloc[i])
-        ts = str(ohlc.index[i])
+    for i in np.flatnonzero(~np.isnan(hl_arr)):
+        i = int(i)
         swings.append({
-            "type": "swing_high" if int(val) == 1 else "swing_low",
-            "level": level,
+            "type": "swing_high" if int(hl_arr[i]) == 1 else "swing_low",
+            "level": float(level_arr[i]),
             "candle_index": i,
-            "timestamp": ts,
+            "timestamp": str(index[i]),
         })
 
     return shl, swings
@@ -94,23 +94,26 @@ def detect_bos_choch(ohlc: pd.DataFrame, shl: pd.DataFrame) -> tuple:
     """
     result = smc.bos_choch(ohlc, shl, close_break=True)
 
+    bos_arr = result["BOS"].to_numpy()
+    choch_arr = result["CHOCH"].to_numpy()
+    level_arr = result["Level"].to_numpy()
+    broken_arr = result["BrokenIndex"].to_numpy()
+    index = ohlc.index
+
     breaks = []
-    for i in range(len(result)):
-        bos_val = result["BOS"].iloc[i]
-        choch_val = result["CHOCH"].iloc[i]
+    for i in np.flatnonzero(~(np.isnan(bos_arr) & np.isnan(choch_arr))):
+        i = int(i)
+        bos_val = bos_arr[i]
 
-        if pd.isna(bos_val) and pd.isna(choch_val):
-            continue
-
-        if not pd.isna(bos_val):
+        if not np.isnan(bos_val):
             break_type = "BOS"
             direction = "bullish" if int(bos_val) == 1 else "bearish"
         else:
             break_type = "CHoCH"
-            direction = "bullish" if int(choch_val) == 1 else "bearish"
+            direction = "bullish" if int(choch_arr[i]) == 1 else "bearish"
 
-        level = float(result["Level"].iloc[i]) if not pd.isna(result["Level"].iloc[i]) else 0.0
-        broken_idx = int(result["BrokenIndex"].iloc[i]) if not pd.isna(result["BrokenIndex"].iloc[i]) else i
+        level = float(level_arr[i]) if not np.isnan(level_arr[i]) else 0.0
+        broken_idx = int(broken_arr[i]) if not np.isnan(broken_arr[i]) else i
 
         breaks.append({
             "type": break_type,
@@ -119,7 +122,7 @@ def detect_bos_choch(ohlc: pd.DataFrame, shl: pd.DataFrame) -> tuple:
             "previous_level": level,
             "candle_index": i,
             "broken_index": broken_idx,
-            "timestamp": str(ohlc.index[i]),
+            "timestamp": str(index[i]),
         })
 
     # Derive bias from last 3 breaks (weighted toward recent)
@@ -147,29 +150,35 @@ def detect_order_blocks(ohlc: pd.DataFrame, shl: pd.DataFrame) -> list:
     """
     result = smc.ob(ohlc, shl, close_mitigation=False)
 
-    obs = []
-    for i in range(len(result)):
-        ob_val = result["OB"].iloc[i]
-        if pd.isna(ob_val):
-            continue
+    ob_arr = result["OB"].to_numpy()
+    top_arr = result["Top"].to_numpy()
+    bottom_arr = result["Bottom"].to_numpy()
+    volume_arr = result["OBVolume"].to_numpy()
+    mitigated_arr = result["MitigatedIndex"].to_numpy()
+    pct_arr = result["Percentage"].to_numpy()
+    index = ohlc.index
 
-        top = float(result["Top"].iloc[i])
-        bottom = float(result["Bottom"].iloc[i])
-        volume = float(result["OBVolume"].iloc[i]) if not pd.isna(result["OBVolume"].iloc[i]) else 0
-        mitigated_idx = result["MitigatedIndex"].iloc[i]
-        pct = float(result["Percentage"].iloc[i]) if not pd.isna(result["Percentage"].iloc[i]) else 0
+    obs = []
+    for i in np.flatnonzero(~np.isnan(ob_arr)):
+        i = int(i)
+        top = float(top_arr[i])
+        bottom = float(bottom_arr[i])
+        volume = float(volume_arr[i]) if not np.isnan(volume_arr[i]) else 0
+        mitigated_idx = mitigated_arr[i]
+        pct = float(pct_arr[i]) if not np.isnan(pct_arr[i]) else 0
+        mitigated = not np.isnan(mitigated_idx) and int(mitigated_idx) != 0
 
         obs.append({
-            "type": "bullish" if int(ob_val) == 1 else "bearish",
+            "type": "bullish" if int(ob_arr[i]) == 1 else "bearish",
             "high": top,
             "low": bottom,
             "midpoint": round((top + bottom) / 2, 6),
             "candle_index": i,
-            "timestamp": str(ohlc.index[i]),
+            "timestamp": str(index[i]),
             "ob_volume": volume,
             "strength_pct": round(pct, 1),
-            "mitigated": not pd.isna(mitigated_idx) and int(mitigated_idx) != 0,
-            "mitigated_index": int(mitigated_idx) if not pd.isna(mitigated_idx) and int(mitigated_idx) != 0 else None,
+            "mitigated": mitigated,
+            "mitigated_index": int(mitigated_idx) if mitigated else None,
             # Compat fields — augmented later by _augment_obs_with_displacement
             "displacement_index": i,
             "displacement_body_atr": 0.0,
@@ -189,26 +198,29 @@ def detect_fvgs(ohlc: pd.DataFrame) -> list:
     """
     result = smc.fvg(ohlc, join_consecutive=False)
 
-    fvgs = []
-    for i in range(len(result)):
-        fvg_val = result["FVG"].iloc[i]
-        if pd.isna(fvg_val):
-            continue
+    fvg_arr = result["FVG"].to_numpy()
+    top_arr = result["Top"].to_numpy()
+    bottom_arr = result["Bottom"].to_numpy()
+    mitigated_arr = result["MitigatedIndex"].to_numpy()
+    index = ohlc.index
 
-        top = float(result["Top"].iloc[i])
-        bottom = float(result["Bottom"].iloc[i])
-        mitigated_idx = result["MitigatedIndex"].iloc[i]
-        filled = not pd.isna(mitigated_idx) and int(mitigated_idx) != 0
+    fvgs = []
+    for i in np.flatnonzero(~np.isnan(fvg_arr)):
+        i = int(i)
+        top = float(top_arr[i])
+        bottom = float(bottom_arr[i])
+        mitigated_idx = mitigated_arr[i]
+        filled = not np.isnan(mitigated_idx) and int(mitigated_idx) != 0
 
         midpoint = round((top + bottom) / 2, 6)
         fvgs.append({
-            "type": "bullish" if int(fvg_val) == 1 else "bearish",
+            "type": "bullish" if int(fvg_arr[i]) == 1 else "bearish",
             "top": top,
             "bottom": bottom,
             "midpoint": midpoint,
             "gap_size": round(top - bottom, 6),
             "candle_index": i,
-            "timestamp": str(ohlc.index[i]),
+            "timestamp": str(index[i]),
             "filled": filled,
             "mitigated_index": int(mitigated_idx) if filled else None,
             "consequent_encroachment": midpoint,
@@ -225,19 +237,22 @@ def detect_liquidity(ohlc: pd.DataFrame, shl: pd.DataFrame) -> list:
     """Detect liquidity levels (equal highs/lows) via SMC library."""
     result = smc.liquidity(ohlc, shl, range_percent=0.01)
 
-    zones = []
-    for i in range(len(result)):
-        liq_val = result["Liquidity"].iloc[i]
-        if pd.isna(liq_val):
-            continue
+    liq_arr = result["Liquidity"].to_numpy()
+    level_arr = result["Level"].to_numpy()
+    end_arr = result["End"].to_numpy()
+    swept_arr = result["Swept"].to_numpy()
+    index = ohlc.index
 
-        level = float(result["Level"].iloc[i])
-        end_idx = int(result["End"].iloc[i]) if not pd.isna(result["End"].iloc[i]) else i
-        swept_val = result["Swept"].iloc[i]
-        swept = not pd.isna(swept_val) and int(swept_val) != 0
+    zones = []
+    for i in np.flatnonzero(~np.isnan(liq_arr)):
+        i = int(i)
+        level = float(level_arr[i])
+        end_idx = int(end_arr[i]) if not np.isnan(end_arr[i]) else i
+        swept_val = swept_arr[i]
+        swept = not np.isnan(swept_val) and int(swept_val) != 0
 
         zones.append({
-            "type": "buy_side" if int(liq_val) == 1 else "sell_side",
+            "type": "buy_side" if int(liq_arr[i]) == 1 else "sell_side",
             "level": round(level, 6),
             "touch_count": 2,  # Library requires min 2 levels in group
             "range_high": round(level * 1.001, 6),
@@ -246,7 +261,7 @@ def detect_liquidity(ohlc: pd.DataFrame, shl: pd.DataFrame) -> list:
             "end_index": end_idx,
             "swept": swept,
             "sweep_candle_index": int(swept_val) if swept else None,
-            "timestamps": [str(ohlc.index[i])],
+            "timestamps": [str(index[i])],
         })
 
     return zones

@@ -8,13 +8,66 @@ import math
 
 from config import (
     BE_MOVE_THRESHOLD_R,
+    COMMISSION_PER_CONTRACT,
     PARTIAL_CLOSE_PCT,
     SLIPPAGE_POINTS,
     SPREAD_POINTS,
     TRADE_MANAGEMENT_ENABLED,
+    get_point_value,
+    is_futures,
 )
 from trading.account import Account
 from trading.risk import calc_risk_reward
+
+
+def fill_penalty() -> float:
+    """Points a single fill gives up to the market.
+
+    A market order crosses half the spread and then slips. Both legs of a round
+    trip pay it, so a round turn costs `SPREAD_POINTS + 2 * SLIPPAGE_POINTS`.
+    """
+    return SPREAD_POINTS / 2 + SLIPPAGE_POINTS
+
+
+def _worsen(price: float, direction: str, side: str) -> float:
+    """Move a fill price against the position by one fill penalty.
+
+    `side` is "entry" or "exit". A long buys higher and sells lower; a short is
+    the mirror. There is no case where a fill lands in your favour.
+    """
+    penalty = fill_penalty()
+    if penalty == 0:
+        return price
+    paying_up = (direction == "LONG") if side == "entry" else (direction != "LONG")
+    return price + penalty if paying_up else price - penalty
+
+
+def _gross_pnl(pos: "Position", exit_price: float, quantity: float) -> float:
+    """P&L before commission, in dollars.
+
+    Spread and slippage are already inside `pos.entry_price` and `exit_price`,
+    since both are recorded net of the fill penalty.
+    """
+    move = exit_price - pos.entry_price if pos.direction == "LONG" else pos.entry_price - exit_price
+    return move * quantity * pos.point_value
+
+
+def _commission(pos: "Position", quantity: float) -> float:
+    """Round-turn commission for the quantity being closed."""
+    if not is_futures(pos.ticker):
+        return 0.0
+    return COMMISSION_PER_CONTRACT * quantity
+
+
+def _costs(pos: "Position", quantity: float) -> float:
+    """Everything the round trip pays away: spread, slippage and commission.
+
+    Reported separately from P&L so "costs ate the edge" is a measurement rather
+    than an inference — the absence of this is why the first attempt at that
+    claim was wrong.
+    """
+    slip = fill_penalty() * 2 * quantity * pos.point_value
+    return slip + _commission(pos, quantity)
 
 
 @dataclass
@@ -35,6 +88,7 @@ class Position:
     pnl_dollars: float | None = None
     pnl_pct: float | None = None
     requested_entry_price: float | None = None  # Pre-spread entry price
+    point_value: float = 1.0  # Dollars per point per contract
     # Trade management fields
     original_stop_loss: float | None = None
     original_quantity: float = 0.0
@@ -47,7 +101,7 @@ class PositionManager:
     def __init__(self):
         self.positions: list[Position] = []
 
-    def open_position(self, decision: dict, account: Account, ticker: str) -> Position:
+    def open_position(self, decision: dict, account: Account, ticker: str) -> Position | None:
         """Open a new paper trade position.
 
         Args:
@@ -56,21 +110,27 @@ class PositionManager:
             ticker: Ticker symbol
 
         Returns:
-            New Position
+            New Position, or None when the stop is too wide to afford a single
+            contract at the configured risk.
         """
         raw_entry = decision["entry_price"]
         sl = decision["stop_loss"]
         tp = decision["take_profit"]
         direction = decision["decision"]
 
-        # Apply half-spread to entry (LONG pays more, SHORT gets less)
-        half_spread = SPREAD_POINTS / 2
-        if direction == "LONG":
-            entry = raw_entry + half_spread
-        else:
-            entry = raw_entry - half_spread
+        # The entry fill gives up half the spread plus slippage. The exit leg
+        # pays the same again in _apply_slippage — charging only one of the two
+        # under-stated a round turn by half.
+        entry = _worsen(raw_entry, direction, "entry")
 
-        quantity = account.get_position_size(entry, sl)
+        # Futures trade in whole contracts at a fixed dollar value per point.
+        point_value = get_point_value(ticker)
+        quantity = account.get_position_size(
+            entry, sl, point_value=point_value, whole_units=is_futures(ticker)
+        )
+        if quantity <= 0:
+            return None
+
         risk_amount = account.get_risk_amount()
 
         pos = Position(
@@ -84,6 +144,7 @@ class PositionManager:
             risk_amount=round(risk_amount, 2),
             entry_time=datetime.now(timezone.utc).isoformat(),
             requested_entry_price=raw_entry,
+            point_value=point_value,
             original_stop_loss=sl,
             original_quantity=round(quantity, 4),
         )
@@ -115,16 +176,14 @@ class PositionManager:
         return fills
 
     @staticmethod
-    def _apply_slippage(fill_price: float, direction: str, fill_type: str) -> float:
-        """Worsen fill price by slippage. SL/TP fills are always worse than ideal."""
-        if SLIPPAGE_POINTS == 0:
-            return fill_price
-        if fill_type == "SL_HIT":
-            # SL fills worsen: LONG SL fills lower, SHORT SL fills higher
-            return fill_price - SLIPPAGE_POINTS if direction == "LONG" else fill_price + SLIPPAGE_POINTS
-        else:  # TP_HIT
-            # TP fills worsen: LONG TP fills lower, SHORT TP fills higher
-            return fill_price - SLIPPAGE_POINTS if direction == "LONG" else fill_price + SLIPPAGE_POINTS
+    def _apply_slippage(fill_price: float, direction: str, fill_type: str = "") -> float:
+        """Worsen an exit fill by half the spread plus slippage.
+
+        `fill_type` is kept for call-site readability; SL and TP fills are
+        penalised identically, which is what the two former branches already did
+        with duplicate expressions.
+        """
+        return _worsen(fill_price, direction, "exit")
 
     def _check_position_fill_managed(self, pos: Position, high: float, low: float) -> list[dict]:
         """Staged trade management: partial close at 1R + breakeven, then trail.
@@ -177,10 +236,9 @@ class PositionManager:
 
     def _partial_close(self, pos: Position, exit_price: float, quantity: float, reason: str) -> dict:
         """Close part of a position. Does NOT set status to CLOSED."""
-        if pos.direction == "LONG":
-            pnl = (exit_price - pos.entry_price) * quantity
-        else:
-            pnl = (pos.entry_price - exit_price) * quantity
+        pnl = _gross_pnl(pos, exit_price, quantity) - _commission(pos, quantity)
+        costs = _costs(pos, quantity)
+        notional = pos.entry_price * quantity * pos.point_value
 
         pos.quantity = round(pos.quantity - quantity, 4)
         partial = {
@@ -191,7 +249,9 @@ class PositionManager:
             "exit_price": round(exit_price, 2),
             "exit_reason": reason,
             "pnl_dollars": round(pnl, 2),
-            "pnl_pct": round(pnl / (pos.entry_price * quantity) * 100, 2) if pos.entry_price else 0,
+            "pnl_pct": round(pnl / notional * 100, 2) if notional else 0,
+            "gross_pnl": round(pnl + costs, 2),
+            "costs": round(costs, 2),
             "rr_achieved": calc_risk_reward(pos.entry_price, pos.original_stop_loss or pos.stop_loss, exit_price),
             "partial": True,
             "partial_quantity": round(quantity, 4),
@@ -245,18 +305,25 @@ class PositionManager:
         return None
 
     def _close(self, pos: Position, exit_price: float, reason: str) -> dict:
-        """Close a position and calculate P&L."""
-        if pos.direction == "LONG":
-            pnl = (exit_price - pos.entry_price) * pos.quantity
-        else:
-            pnl = (pos.entry_price - exit_price) * pos.quantity
+        """Close a position and calculate P&L.
+
+        `pnl` is what the account receives. `costs` is what the round trip paid
+        away, and `gross_pnl` is what it would have made at the unpenalised
+        levels — so `gross_pnl - costs == pnl` holds exactly, because the spread
+        and slippage are already inside entry_price and exit_price.
+        """
+        pnl = _gross_pnl(pos, exit_price, pos.quantity) - _commission(pos, pos.quantity)
+        costs = _costs(pos, pos.quantity)
+        gross = pnl + costs
+
+        notional = pos.entry_price * pos.quantity * pos.point_value
 
         pos.status = "CLOSED"
         pos.exit_price = exit_price
         pos.exit_reason = reason
         pos.exit_time = datetime.now(timezone.utc).isoformat()
         pos.pnl_dollars = round(pnl, 2)
-        pos.pnl_pct = round(pnl / (pos.entry_price * pos.quantity) * 100, 2) if pos.entry_price else 0
+        pos.pnl_pct = round(pnl / notional * 100, 2) if notional else 0
 
         return {
             "position_id": pos.id,
@@ -267,15 +334,28 @@ class PositionManager:
             "exit_reason": reason,
             "pnl_dollars": pos.pnl_dollars,
             "pnl_pct": pos.pnl_pct,
+            "gross_pnl": round(gross, 2),
+            "costs": round(costs, 2),
             "rr_achieved": calc_risk_reward(pos.entry_price, pos.stop_loss, exit_price),
         }
 
-    def close_position_manual(self, position_id: str, exit_price: float) -> dict | None:
-        """Manually close a position at a given price."""
+    def close_position_manual(self, position_id: str, exit_price: float,
+                              reason: str = "MANUAL") -> dict | None:
+        """Close a position at a given price, paying the usual exit costs.
+
+        The engine uses this for session-end, circuit-breaker and end-of-backtest
+        closes — 19% of exits on a measured year. It used to bypass the fill
+        penalty entirely, so nearly a fifth of round trips were free.
+        """
         for pos in self.positions:
             if pos.id == position_id and pos.status == "OPEN":
-                return self._close(pos, exit_price, "MANUAL")
+                price = self._apply_slippage(exit_price, pos.direction, reason)
+                return self._close(pos, price, reason)
         return None
+
+    def unrealized_pnl(self, price: float) -> float:
+        """Mark-to-market P&L of every open position at the given price."""
+        return sum(_gross_pnl(pos, price, pos.quantity) for pos in self.get_open_positions())
 
     def get_open_positions(self) -> list[Position]:
         """Return all open positions."""

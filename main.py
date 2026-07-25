@@ -630,6 +630,22 @@ def main():
     p_dl.add_argument("--days", type=int, default=90, help="Number of days (default: 90)")
     p_dl.add_argument("--save", help="Path to save CSV (auto-generated if omitted)")
 
+    p_val = sub.add_parser("validate-data", help="Check a dataset before backtesting on it")
+    p_val.add_argument("data", help="Path to a Databento .dbn.zst or CSV file")
+
+    p_sweep = sub.add_parser("sweep", help="Run a named experiment sweep and record every cell")
+    p_sweep.add_argument("name", help="Sweep name (see backtest/sweeps.py)")
+    p_sweep.add_argument("data", help="Path to a Databento .dbn.zst or CSV file")
+    p_sweep.add_argument("--ticker", default="ES", help="Ticker symbol (default: ES)")
+    p_sweep.add_argument("--workers", type=int, help="Parallel workers (default: cores - 2)")
+    p_sweep.add_argument("--span", default="screen",
+                         choices=["screen", "train", "validate", "holdout"],
+                         help="Date span: screen=2023 (default, fast), train=2021-2024, "
+                              "holdout=2026 (look once, at the end)")
+
+    p_rep = sub.add_parser("sweep-report", help="Rank everything in the experiment store")
+    p_rep.add_argument("--top", type=int, default=15, help="Rows to show (default: 15)")
+
     p_bt = sub.add_parser("backtest", help="Run backtest on historical data")
     p_bt.add_argument("data", help="Path to OHLCV CSV file")
     p_bt.add_argument("--ticker", default="ES", help="Ticker symbol (default: ES). Use BTC-USD for crypto.")
@@ -671,6 +687,19 @@ def main():
             start=args.start,
             end=args.end,
         )
+    elif args.command == "validate-data":
+        from data.validate import validate
+        findings = validate(args.data)
+        sys.exit(1 if findings["problems"] else 0)
+    elif args.command == "sweep":
+        from backtest.experiments import run_matrix
+        from backtest.sweeps import get_sweep
+        cells = get_sweep(args.name, args.span)
+        run_matrix(args.data, cells, ticker=args.ticker, max_workers=args.workers)
+        print("\n  Run 'py main.py sweep-report' to rank results.")
+    elif args.command == "sweep-report":
+        from backtest.experiments import report
+        report(top=args.top)
     elif args.command == "download-history":
         cmd_download_history(
             symbol=args.symbol,

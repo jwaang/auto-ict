@@ -32,40 +32,44 @@ def detect_displacements(
     displacements = []
     opens = df["open"].values
     closes = df["close"].values
+    atr_arr = atr.to_numpy()
+    body_arr = body.to_numpy()
 
-    for i in range(atr_period, len(df)):
-        if atr.iloc[i] is None or np.isnan(atr.iloc[i]) or atr.iloc[i] == 0:
+    # Only bars with a usable ATR can be displacements; compute the ratio for
+    # those in one pass and visit just the ones that clear the threshold.
+    usable = ~np.isnan(atr_arr) & (atr_arr != 0)
+    ratios = np.divide(body_arr, atr_arr, out=np.zeros_like(body_arr, dtype=float), where=usable)
+    candidates = np.flatnonzero(usable & (ratios >= atr_mult))
+
+    for i in candidates:
+        i = int(i)
+        if i < atr_period:
             continue
 
-        body_val = body.iloc[i]
-        atr_val = atr.iloc[i]
-        ratio = body_val / atr_val
+        direction = "bullish" if closes[i] > opens[i] else "bearish"
 
-        if ratio >= atr_mult:
-            direction = "bullish" if closes[i] > opens[i] else "bearish"
-
-            # Count consecutive displacement candles in same direction
-            consecutive = 1
-            for j in range(i - 1, max(0, i - 5), -1):
-                if atr.iloc[j] == 0 or np.isnan(atr.iloc[j]):
-                    break
-                if body.iloc[j] / atr.iloc[j] >= atr_mult:
-                    j_dir = "bullish" if closes[j] > opens[j] else "bearish"
-                    if j_dir == direction:
-                        consecutive += 1
-                    else:
-                        break
+        # Count consecutive displacement candles in same direction
+        consecutive = 1
+        for j in range(i - 1, max(0, i - 5), -1):
+            if atr_arr[j] == 0 or np.isnan(atr_arr[j]):
+                break
+            if body_arr[j] / atr_arr[j] >= atr_mult:
+                j_dir = "bullish" if closes[j] > opens[j] else "bearish"
+                if j_dir == direction:
+                    consecutive += 1
                 else:
                     break
+            else:
+                break
 
-            displacements.append({
-                "direction": direction,
-                "candle_index": i,
-                "timestamp": str(timestamps[i]),
-                "body": float(body_val),
-                "atr": float(atr_val),
-                "body_atr_ratio": round(float(ratio), 2),
-                "consecutive_count": consecutive,
-            })
+        displacements.append({
+            "direction": direction,
+            "candle_index": i,
+            "timestamp": str(timestamps[i]),
+            "body": float(body_arr[i]),
+            "atr": float(atr_arr[i]),
+            "body_atr_ratio": round(float(ratios[i]), 2),
+            "consecutive_count": consecutive,
+        })
 
     return displacements
