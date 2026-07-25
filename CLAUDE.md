@@ -206,14 +206,54 @@ sequential rather than one big factorial, so each answers one question.
 Run `sweep smoke` first — macOS spawns workers rather than forking, so an entry-point
 problem surfaces in a minute instead of an hour into a real sweep.
 
-**Judging a result.** `sweep-report` ranks by edge over each cell's own random-walk
-benchmark, `stop / (stop + target)`, because a strategy with a distant target has a
-low coin-flip win rate and comparing raw win rates across geometries is meaningless.
-Cells under 30 trades are unrankable and under 200 are suggestive only. With many
-configurations tried, require t > 3 rather than t > 2 (Harvey/Liu/Zhu).
+**Judging a result.** `sweep-report` ranks by edge over each cell's own benchmark,
+because a strategy with a distant target has a low coin-flip win rate and comparing
+raw win rates across geometries is meaningless. Cells under 30 trades are unrankable
+and under 200 are suggestive only. With many configurations tried, require t > 3
+rather than t > 2 (Harvey/Liu/Zhu).
+
+Two things about that benchmark cost a wrong published conclusion each, so read
+this before trusting an edge figure.
+
+**Score barrier exits only.** `stop / (stop + target)` is a first-passage result
+for two absorbing barriers: it describes a trade ending at its stop or its target
+and nothing else. Session-end and circuit-breaker closes end at whatever price is
+there, and they skew to small positive scratches, so counting them as wins inflates
+every edge. `_geometry` partitions on `exit_reason` and reports `nonbarrier_n` and
+`nonbarrier_pnl` separately. Note a forced close being gross-positive is
+survivorship — a trade still open at 16:00 is one that was not stopped — not a
+reason to prefer a time exit.
+
+**Prefer the measured null to the formula.** `stop / (stop + target)` also assumes
+unlimited time, but positions are force-closed at 16:00 ET, and the target is
+farther away than the stop, so the cutoff removes target-hits more often. The
+formula therefore overstates the benchmark, by ~0.1 points at a 1.7x target and 2
+to 3.4 points at 2.5x. `backtest/nullmodel.py` measures it instead: random entries
+on the same bars, geometry sampled from the run's own trades, resolved through the
+same 1-minute first-touch logic and the same cutoff. Six thousand draws take 0.1
+seconds, so every cell carries one and ranking prefers `edge_vs_null`.
+
+Pass `paired=True` for the sharper variant: it reuses each trade's own bar, stop
+and target and randomises only direction, so censoring matches exactly and the
+result isolates direction skill from timing skill. This matters — real entries
+cluster early in the session and are censored 5.8% of the time against 15.8% for
+uniform sampling.
+
+**The profitability bar is a number.** Break-even needs
+`WR = (1 + cost_share) / (1 + mult)`, so the required edge over a matched null is
++3.5 win-rate points at a 10-point stop, +1.2 at 30 points. Measure a candidate
+against that, not against zero.
 
 **Spans.** Screen and select on 2021-07 to 2024-12. 2025 has been seen
 diagnostically. 2026-01 to 2026-07 is the untouched holdout — look once, at the end.
+
+**Where this left off.** Sixty-five configurations reached the bar nowhere. The
+entry is indistinguishable from random at z +0.11 per concept (n=622 and n=142) and
+z −0.01 overall (n=764); barrier exits and time exits are likewise flat; costs at
+11% of R are the binding constraint. See experiment 26. Further parameter search on
+this implementation is measured to be futile — what remains is a different
+instrument, a different data source such as order flow, or accepting that 15-minute
+ES is efficient at this horizon.
 
 ## Confluence Scoring (0-100)
 

@@ -40,6 +40,94 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 26 — No concept carries edge, and the search is closed (July 2026)
+
+Configurations tried to date: **65**. Runtime: 21.8 min for the decomposition,
+seconds for the two measurements that follow it.
+
+### The question
+
+Experiment 25 measured total edge at zero over 878 barrier trades. That leaves two
+readings: every concept is noise, or some are positive and some negative and they
+cancel. The confluence score adds them up and has no predictive slope, which fits
+cancellation. The entry waterfall records which concept fired, so one run decides
+it. Pre-registered before looking: a concept is worth pursuing only at z > 3 with
+200+ barrier trades.
+
+### Both concepts sit exactly on their own null
+
+Full training span, 15m, best bias rule, each setup type against its own matched
+null:
+
+| setup type | trades | barrier n | WR | matched null | edge | z | net P&L |
+|---|---|---|---|---|---|---|---|
+| FVG+OB overlap | 683 | **622** | 35.0% | 34.83% | **+0.2** | **+0.11** | −$46,250 |
+| FVG+OTE | 158 | 142 | 30.3% | 29.85% | **+0.4** | **+0.11** | −$2,892 |
+| *whole run* | 841 | 764 | 34.2% | 34.18% | **−0.0** | **−0.01** | −49.1% |
+
+**Cancellation is false.** FVG+OB overlap carries three times the pre-registered
+sample floor and returns +0.2 points where +3.5 is needed. The 95% interval on
+that edge is [−3.5, +3.9], so break-even sits at its extreme upper edge.
+
+The whole result is two recorded numbers: **gross +$10,717 against costs of
+$59,860.** Max drawdown 62%.
+
+### The one asymmetry in the run is survivorship, not edge
+
+`nonbarrier_pnl` is **+$25,492 over 77 trades**, so the forced 16:00 closes were
+the only gross-positive component. That suggests a time exit might beat a target
+exit, which would be a genuinely different rule. It is not: a trade still open at
+16:00 is one that has not been stopped, so conditioning on survival selects
+winners mechanically.
+
+Measured directly on random entries — stop only, no target, exit at 16:00, over
+the training span:
+
+| stop | direction | n | stopped | mean R gross | mean R net | t |
+|---|---|---|---|---|---|---|
+| 9.2 pt | LONG | 5995 | 69.9% | +0.0397 | −0.0707 | −2.59 |
+| 9.2 pt | SHORT | 5995 | 71.8% | −0.0281 | −0.1385 | −4.84 |
+| 20 pt | RANDOM | 5995 | 48.1% | −0.0091 | −0.0601 | −3.40 |
+| 40 pt | RANDOM | 5995 | 22.5% | −0.0029 | −0.0284 | −2.61 |
+
+Gross expectancy is nil at every stop width. The best figure, +0.04R on the long
+side at a tight stop, is the 2021-24 equity drift, and it does not survive 0.11R
+of costs. Net is significantly negative everywhere.
+
+This also confirms the cost model arithmetic independently: gross minus net is
+0.1104R at a 9.24-point stop against a predicted 1.02/9.24 = 0.1104, and 0.0255R
+at 40 points against 1.02/40 = 0.0255.
+
+### What is now established
+
+1. **The entry has no edge.** z +0.11 per concept at n=622 and n=142, z −0.01
+   overall at n=764, scored against random entries at matched geometry under
+   matched censoring.
+2. **Barrier exits have no edge**, by the same measurement.
+3. **A time exit has no edge either**, gross or net, at any stop width.
+4. **Costs are the binding constraint and they are structural.** 1.02 points of
+   spread, slippage and commission on a 9.24-point stop is 11% of R, and it is
+   independent of position size.
+5. **Sixty-five configurations reach the +3.5-point bar nowhere.** Bias rules,
+   triggers (levels and CISD), timeframes (15m and 5m), all three strategies,
+   direction filters, inversion, and now both entry concepts individually.
+
+Parameter search on this implementation cannot succeed, and that is a measured
+statement rather than an impression. What remains needs a decision, not a sweep:
+a different instrument, a different data source such as order flow, or accepting
+that 15-minute ES is efficient at this horizon.
+
+### Correction to the record
+
+An earlier note in this session recorded the first decomposition run as having
+"died with no row and no error", and hardened the diagnostics in response. The run
+had not died — it completed normally in 21.8 minutes and I read the log before it
+flushed. The hardening is worth keeping on its own merits (an optional diagnostic
+should never be able to lose an expensive backtest, and the shared 1-minute view
+removes a per-setup-type copy), but it fixed a fault that was never demonstrated.
+
+---
+
 ## Experiment 25 — The edge metric was measuring the wrong population (July 2026)
 
 Configurations tried to date: **64**. Runtime: 28 min for the extension, plus
