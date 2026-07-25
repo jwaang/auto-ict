@@ -98,11 +98,46 @@ This also confirms the cost model arithmetic independently: gross minus net is
 0.1104R at a 9.24-point stop against a predicted 1.02/9.24 = 0.1104, and 0.0255R
 at 40 points against 1.02/40 = 0.0255.
 
+### The paired null splits it into timing and direction
+
+The cell was run twice — once before the paired null existed and once after — and
+both produced identical stats (841 trades, WR 35.9%, PF 0.85, −49.14%), which is a
+free determinism check. Both rows are kept. The second carries the decomposition:
+
+| null | what it randomises | rate | strategy edge | z |
+|---|---|---|---|---|
+| unpaired | a random bar **and** direction | 34.99% | −0.8 | −0.48 |
+| **paired** | direction only, at the strategy's **own** bars | **33.00%** | **+1.2** | **+0.68** |
+| analytic formula | — | 35.78% | — | — |
+
+A coin flip at the moments this strategy chooses scores **2.0 points worse** than a
+coin flip at random moments. So the result decomposes:
+
+- **Timing: −2.0 points.** The chosen moments are intrinsically harder — the stop
+  is hit first more often *whichever way the trade is taken*. That is what a
+  retracement entry into a fair value gap does: it enters against immediate
+  momentum, with a stop sized from an ATR that does not know it.
+- **Direction: +1.2 points.** The bias rule beats a coin flip at those same
+  moments. This is the first positive component measured anywhere in the program.
+
+Read it carefully before acting on it. z is 0.68, the interval on +1.2 is ±3.4 and
+contains zero, and the bar is +3.5. Even a perfect fix to the timing leaves +1.2
+against +3.5 at a 10-point stop — though the bar falls to +1.2 at a 30-point stop,
+which is exactly break-even and nothing more.
+
+What it does do is convert "nothing works" into one concrete testable claim: **the
+entry trigger subtracts about two points and the bias rule adds about one.** The
+test is to keep the bias and drop the retracement requirement — enter at market on
+the signal bar — and see whether timing goes neutral. That is one cell, about 22
+minutes, and it is the first time the evidence has pointed at a specific change
+rather than at another sweep.
+
 ### What is now established
 
-1. **The entry has no edge.** z +0.11 per concept at n=622 and n=142, z −0.01
-   overall at n=764, scored against random entries at matched geometry under
-   matched censoring.
+1. **The entry has no net edge.** z +0.11 per concept at n=622 and n=142, z −0.01
+   to −0.48 overall at n=764, scored against random entries at matched geometry
+   under matched censoring. The decomposition above shows this is a −2.0 timing
+   component partly offset by a +1.2 direction component, neither significant.
 2. **Barrier exits have no edge**, by the same measurement.
 3. **A time exit has no edge either**, gross or net, at any stop width.
 4. **Costs are the binding constraint and they are structural.** 1.02 points of

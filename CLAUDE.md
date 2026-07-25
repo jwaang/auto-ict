@@ -248,12 +248,22 @@ against that, not against zero.
 diagnostically. 2026-01 to 2026-07 is the untouched holdout — look once, at the end.
 
 **Where this left off.** Sixty-five configurations reached the bar nowhere. The
-entry is indistinguishable from random at z +0.11 per concept (n=622 and n=142) and
-z −0.01 overall (n=764); barrier exits and time exits are likewise flat; costs at
-11% of R are the binding constraint. See experiment 26. Further parameter search on
-this implementation is measured to be futile — what remains is a different
-instrument, a different data source such as order flow, or accepting that 15-minute
-ES is efficient at this horizon.
+entry is indistinguishable from random at z +0.11 per concept (n=622 and n=142);
+barrier exits and time exits are likewise flat; costs at 11% of R are the binding
+constraint. See experiment 26.
+
+The paired null splits the net figure into a **−2.0 point timing component and a
++1.2 point direction component** (n=764, z +0.68, so neither is significant). A
+coin flip at the moments this strategy chooses does 2.0 points worse than a coin
+flip at random moments, which is what a retracement entry into an FVG buys: entry
+against immediate momentum. The bias rule then adds 1.2 points back.
+
+That makes one test worth running before concluding: keep the bias, drop the
+retracement requirement, enter at market on the signal bar, and see whether the
+timing penalty goes neutral. One cell, ~22 minutes. It will not on its own clear
+the +3.5 bar. Beyond it, what remains needs a different instrument, a different
+data source such as order flow, or accepting that 15-minute ES is efficient at this
+horizon.
 
 ## Confluence Scoring (0-100)
 
