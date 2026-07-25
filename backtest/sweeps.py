@@ -25,7 +25,14 @@ TRAIN = {"trade_start": "2021-07-25", "trade_end": "2024-12-31"}
 VALIDATE = {"trade_start": "2025-01-01", "trade_end": "2025-12-31"}
 HOLDOUT = {"trade_start": "2026-01-01", "trade_end": "2026-07-23"}
 
-SPANS = {"screen": SCREEN, "train": TRAIN, "validate": VALIDATE, "holdout": HOLDOUT}
+# Half-year screen for lower timeframes. 5m produces roughly 3x the setups per
+# calendar day, so six months at 5m yields more trades than a year at 15m while
+# costing about half the wall clock. Trade count is the binding constraint on
+# reading a win rate, not calendar length.
+SCREEN_H2 = {"trade_start": "2023-07-01", "trade_end": "2023-12-31"}
+
+SPANS = {"screen": SCREEN, "screen_h2": SCREEN_H2, "train": TRAIN,
+         "validate": VALIDATE, "holdout": HOLDOUT}
 
 # Premium/discount tells ICT *where* to enter inside a bias, not which way to
 # trade. Measured on 2024 it votes bearish 97% of the time, so as a direction
@@ -249,6 +256,36 @@ def triggers(span=SCREEN, bias: str = "no_pd_v2") -> list[dict]:
     return cells
 
 
+def execution_tf(span=SCREEN_H2, bias: str = "no_pd_v2") -> list[dict]:
+    """Test ICT's documented execution ladder, which the code has never used.
+
+    Every run so far executes on 15m — but 15m is ICT's *array* timeframe. His
+    day-trade ladder is 1H bias, 15m context, **5m execution**, and his stated
+    method for improving R:R is to shrink the stop by dropping timeframes while
+    leaving the target unchanged. That combination has never been tested here.
+
+    It is the one configuration where favourable excursion measured in R could
+    exceed target R rather than sitting at the 0.70 it has held at across every
+    trigger, direction and bias rule so far. The headwind is quantified: cost drag
+    is 1.02/stop_points, so a 3-point stop gives away 34% of R.
+
+    Run on a half-year span so 5m stays inside a sane wall clock; 5m still yields
+    more trades over six months than 15m does over twelve.
+    """
+    base = {**ICT_GEOMETRY, **BIAS_VARIANTS[bias]}
+    return [
+        _cell("exec:15m_control", base, span, entry_tf="15min",
+              hypothesis="Control on the same half-year span so the 5m cells are "
+                         "comparable rather than being judged against a full year."),
+        _cell("exec:5m_levels", base, span, entry_tf="5min",
+              hypothesis="ICT's execution timeframe with the zone finders. Tighter "
+                         "structural stop, target still from HTF liquidity."),
+        _cell("exec:5m_cisd", {**base, "entry_trigger": "cisd"}, span, entry_tf="5min",
+              hypothesis="5m execution with CISD, the best trigger so far by edge "
+                         "over benchmark and the only causally clean one."),
+    ]
+
+
 def smoke(span=None) -> list[dict]:
     """Two cells over one month — verifies the harness before a long run.
 
@@ -268,6 +305,7 @@ SWEEPS = {
     "invert": invert,
     "directions": directions,
     "triggers": triggers,
+    "execution_tf": execution_tf,
     "bias": bias_rules,
     "geometry": geometry,
     "swing": swing_lengths,

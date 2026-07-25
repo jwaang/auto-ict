@@ -669,7 +669,7 @@ def main():
     p_sweep.add_argument("--ticker", default="ES", help="Ticker symbol (default: ES)")
     p_sweep.add_argument("--workers", type=int, help="Parallel workers (default: cores - 2)")
     p_sweep.add_argument("--span", default="screen",
-                         choices=["screen", "train", "validate", "holdout"],
+                         choices=["screen", "screen_h2", "train", "validate", "holdout"],
                          help="Date span: screen=2023 (default, fast), train=2021-2024, "
                               "holdout=2026 (look once, at the end)")
 

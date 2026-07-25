@@ -40,6 +40,93 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 23 — The 5m execution ladder backfires; the confluence score is noise (July 2026)
+
+Configurations tried to date: **48**.
+
+### ICT's execution ladder, tested and falsified
+
+Every prior run executed on 15m, which is ICT's *array* timeframe. His day-trade
+ladder is 1H bias, 15m context, **5m execution**, and his documented way to improve
+R:R is to shrink the stop by dropping timeframes while leaving the target alone. The
+prediction was that a tighter stop would push favourable excursion measured in R
+above target R, breaking the 0.70R ceiling that had held everywhere.
+
+Half-year span (2023 H2) for all three arms so they are comparable; 5m yields more
+trades over six months than 15m does over twelve.
+
+| Cell | n | WR | Coin-flip | Edge | z | Stop | Target R | Median MFE | Cost/R | Return | Runtime |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 15m control | 183 | 33.3% | 37.0% | -3.7 | -1.04 | 10.2 | 1.55 | **0.65R** | 10.1% | -35.6% | 3.5 min |
+| 5m levels | 460 | 26.7% | 36.5% | -9.8 | -4.37 | 6.2 | 1.60 | **0.52R** | 16.6% | -73.2% | 9.0 min |
+| 5m CISD | 972 | 27.6% | 31.9% | -4.3 | -2.88 | 3.7 | 2.22 | **0.55R** | 27.6% | -87.5% | 9.0 min |
+
+**Dropping to 5m made excursion in R terms worse, not better: 0.65R to 0.52-0.55R.**
+
+The mechanism is mechanical and worth stating, because it generalises. A tighter
+stop does shrink R — but it also shortens how long the trade survives, and MFE is
+measured over the trade's life. The position is terminated before excursion can
+accumulate. Losers' MFE falls to 0.24-0.29R: they die almost immediately.
+
+So ICT's "shrink the stop by dropping timeframes" prescription does not transfer to a
+mechanised version of this rule set. Meanwhile cost drag rises from 10.1% to 27.6%
+of R, because `cost_share_of_R = 1.02 / stop_points` and a 3.7-point stop is brutal.
+
+5m is strictly worse than 15m on every axis measured.
+
+### The confluence score carries no information
+
+Pooling `score_buckets` across all 45 recorded cells — 22,574 trades:
+
+| Confluence score | Trades | Win rate |
+|---|---:|---:|
+| 60-65 | 1,346 | 34.3% |
+| 65-70 | 1,301 | **40.4%** |
+| 70-75 | 1,192 | **23.7%** |
+| 75-80 | 2,446 | 35.0% |
+| 80-100 | 16,289 | 33.1% |
+
+Non-monotonic, and the slope from lowest bucket to highest is **-1.3 points**. The
+70-75 band is the worst at 23.7% while 65-70 is the best at 40.4%. That is noise.
+
+Two consequences:
+
+- **The 17-weight confluence system — the centrepiece of the strategy — does not
+  rank setups.** `MIN_CONFLUENCE_SCORE` is a trade-count throttle, not a quality
+  filter.
+- **A confluence-weight sweep is pointless.** Reweighting cannot turn noise into
+  signal, so that planned sweep is dropped rather than run. Second hypothesis killed
+  by measurement rather than compute.
+
+Also note **72% of all trades score 80 or above** (16,289 of 22,574). With weights
+summing to 129 against a threshold of 60, nearly everything passes and most things
+saturate the top band, so the scale fails as a ranking device even before asking
+whether its factors predict anything.
+
+Caveat: these cells share underlying setups, so 22,574 is not 22,574 independent
+observations. The non-monotonicity is stark and consistent regardless.
+
+### Two hypotheses killed without spending compute
+
+Experiment 21 dropped the wide-stop sweep because losers never travel far enough for
+a wider stop to rescue them. This experiment drops the confluence-weight sweep for
+the same kind of reason. Measuring first and sweeping second has now saved roughly
+an hour of runtime and, more importantly, kept two dead ends out of the trial count.
+
+### What is genuinely left
+
+One thing, and it is a different code path rather than another parameter: the two
+concrete ICT strategies, `ict_2022` and `silver_bullet`. They require a temporal
+sequence — liquidity sweep, then market structure shift, then FVG entry, in causal
+order — and they gate on kill zones. That is far more selective than anything tested
+so far, and selectivity is the one remaining avenue the evidence supports: fewer,
+better trades directly attack a cost drag of 10-28% of R.
+
+The `strategies` sweep has existed since the harness was built and has never been
+run.
+
+---
+
 ## Experiment 22 — CISD is a better trigger and a worse strategy (July 2026)
 
 Configurations tried to date: **45**. New module `ict/cisd.py`, 15 tests.
