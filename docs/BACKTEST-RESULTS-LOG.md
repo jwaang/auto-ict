@@ -81,6 +81,86 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 32 — The concurrency cap is not a lever, and 2025 is significantly negative (July 2026)
+
+Five cells, ~100 min. `MAX_CONCURRENT_POSITIONS = 3` had never been varied — zero
+occurrences in `logs/experiments.jsonl` — and was bound at import time in
+`trading/risk.py`, the third constant found in that state. Now sweepable.
+
+### The power argument that motivated this was wrong
+
+The rejection funnel showed "Max concurrent positions reached" 912 times against
+807 trades taken, which suggested raising the cap would roughly double the book
+and drop the statistical hurdle below the economic bar for the first time.
+
+**It does not. The funnel counts bar-level rejections, not distinct
+opportunities** — the same signal is re-rejected on every bar while the slots
+stay full. Raising the cap from 3 to 25 added about 130 trades, not 900, and the
+statistical hurdle never fell below the economic bar at any cap.
+
+That misreading is recorded because the funnel is the natural place to look for
+"what is blocking trades", and it will mislead the same way again.
+
+### On the training span the edge moved, and it was noise
+
+| cap | trades | barrier n | WR | edge | z | econ bar | stat hurdle | gross | net |
+|---|---|---|---|---|---|---|---|---|---|
+| 3 (baseline) | 807 | 729 | 33.33 | −0.22 | −0.13 | 4.24 | 5.24 | +$5,030 | −$52,113 |
+| **6** | 938 | 847 | 36.01 | **+2.24** | 1.36 | 4.35 | 4.95 | +$12,372 | −$51,640 |
+| 12 | 897 | 793 | 34.30 | +2.09 | 1.24 | 4.14 | 5.06 | −$3,974 | −$64,397 |
+| 25 | 935 | 821 | 34.10 | +1.47 | 0.89 | 4.02 | 4.96 | −$4,794 | −$66,755 |
+
+Cap 6 was the best cell ever measured in this program: gross +$12,372 and an
+edge of +2.24. It was still not a result — z 1.36 against a threshold of 3, and
++2.24 against an economic bar of +4.35. The edge also declined monotonically
+with the cap, which fits noise around zero better than a real optimum at 6.
+
+`P(edge > 0) = 100%` appears again at every cap and again means nothing: it is
+spread across null seeds, about 0.6 points, while sampling error is 1.65.
+Experiment 30 documented this trap and it recurred immediately.
+
+### The pre-registered validation kills it
+
+Rather than sweeping caps 4, 5, 7 and 8 to sharpen a peak — which would be
+selecting harder on a span already seen 72 times — cap 6 was taken to **2025**,
+out of sample, with cap 3 run alongside as a control. Registered before looking:
+cap 6 must beat cap 3 in the same direction by roughly +2 points.
+
+| 2025 cell | trades | barrier n | WR | edge | **z** | gross | net |
+|---|---|---|---|---|---|---|---|
+| cap 3 | 195 | 180 | 23.89 | **−9.29** | −2.92 | −$33,222 | −$45,214 |
+| cap 6 | 234 | 213 | 22.54 | **−8.87** | **−3.10** | −$35,862 | −$49,751 |
+
+Both land near −9 and cap 6 is worse in dollars. The training-span +2.24 does not
+reproduce. **The cap is not a lever**, and selecting the best of a three-cell
+curve produced exactly the kind of number this harness exists to catch.
+
+### The second significant result in the program, and it is negative again
+
+Cap 6 on 2025 reaches **z −3.10**, clearing the |z| > 3 threshold. The only other
+result ever to clear it was experiment 29's −5.07 for dropping the OTE gate.
+
+**Every statistically significant number this program has produced is negative.**
+Two observations at |z| > 3, both worse than random, against 72 configurations
+that otherwise cannot be distinguished from a coin flip.
+
+Do not over-read it. 2025 is one year, it has been seen diagnostically before,
+and a −9 point edge on 180 to 213 barrier trades could still be regime rather
+than mechanism — 2025 differs sharply from the 2021-24 training span, where the
+same configuration measured −0.22. But it is the second time the strategy has
+been caught doing something worse than nothing, and the first time on data it
+was not fitted to.
+
+### What is now established
+
+1. **The concurrency cap is not a lever.** A +2.24 training-span edge reversed to
+   −8.87 out of sample.
+2. **The rejection funnel counts bar-level rejections**, so it overstates how
+   many trades a loosened gate would add.
+3. **72 configurations.** The 2026 holdout remains unopened.
+
+---
+
 ## Experiment 31 — The exit is not the problem either (July 2026)
 
 One cell, 20.4 min. `TRADE_MANAGEMENT_ENABLED` had been `False` for all 68

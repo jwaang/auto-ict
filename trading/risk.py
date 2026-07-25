@@ -86,13 +86,19 @@ def validate_trade(
             return False, f"SL too wide: {sl_pct:.4f} > {MAX_SL_DISTANCE_PCT}"
 
     # Position count
-    if open_position_count >= MAX_CONCURRENT_POSITIONS:
-        return False, f"Max concurrent positions ({MAX_CONCURRENT_POSITIONS}) reached"
+    # Sweepable, because it was not. This is a portfolio risk limit, not a
+    # signal rule, and it silently decided which signals became trades by
+    # arrival order: it rejected 912 signals against 807 trades taken in the
+    # clean 2021-24 baseline. Raising it adds samples of the same entry rule.
+    max_positions = params.get("max_concurrent_positions", MAX_CONCURRENT_POSITIONS)
+
+    if open_position_count >= max_positions:
+        return False, f"Max concurrent positions ({max_positions}) reached"
 
     # Account risk
     risk_amount = account.get_risk_amount()
     total_risk_pct = (open_position_count + 1) * RISK_PER_TRADE_PCT
-    if total_risk_pct > MAX_CONCURRENT_POSITIONS * RISK_PER_TRADE_PCT:
+    if total_risk_pct > max_positions * RISK_PER_TRADE_PCT:
         return False, f"Total risk {total_risk_pct}% exceeds limit"
 
     # Circuit breaker

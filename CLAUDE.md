@@ -339,7 +339,24 @@ the per-trade paired delta in net R on identical entries. Result: **+0.0114R,
 unchanged. Mean R is −0.1044, so break-even needs about +0.10R and management
 supplies a tenth of it. See experiment 31.
 
-Two things worth carrying forward from it. A partial close does **not** add cost
+**The concurrency cap is not a lever either, and 2025 is significantly negative.**
+`MAX_CONCURRENT_POSITIONS` was the third constant found bound at import time and
+never swept. On the training span, raising it to 6 gave the best cell ever
+measured here — edge +2.24, gross +$12,372 — and it did not reproduce: on 2025,
+out of sample, cap 6 scored **−8.87 against cap 3's −9.29**. Selection noise.
+
+Two cautions from it. **The rejection funnel counts bar-level rejections, not
+distinct opportunities** — "max concurrent positions" appeared 912 times against
+807 trades, but raising the cap added only ~130 trades, so the funnel badly
+overstates what loosening a gate would admit. And `P(edge > 0)` across null seeds
+is *not* significance; it hit 100% at every cap while z stayed near 1.
+
+**Every statistically significant result this program has produced is negative:**
+experiment 29's −5.07 for dropping the OTE gate, and cap 6 on 2025 at z −3.10.
+Seventy-two configurations, two observations past |z| > 3, both worse than
+random. See experiment 32.
+
+Two things worth carrying forward from experiment 31. A partial close does **not** add cost
 in this model — total closed quantity is 100% either way, spread and slippage are
 charged on quantity filled, and commission is per contract not per ticket. And
 the **three-position concurrency cap has now shaped three separate results**
