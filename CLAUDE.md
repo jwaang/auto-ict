@@ -258,12 +258,32 @@ coin flip at the moments this strategy chooses does 2.0 points worse than a coin
 flip at random moments, which is what a retracement entry into an FVG buys: entry
 against immediate momentum. The bias rule then adds 1.2 points back.
 
-That makes one test worth running before concluding: keep the bias, drop the
-retracement requirement, enter at market on the signal bar, and see whether the
-timing penalty goes neutral. One cell, ~22 minutes. It will not on its own clear
-the +3.5 bar. Beyond it, what remains needs a different instrument, a different
-data source such as order flow, or accepting that 15-minute ES is efficient at this
-horizon.
+That made two tests worth running. The first is done. **The +1.2 has no economic
+value at any geometry**: re-resolving experiment 26's own trades at stops of 15,
+20, 30, 40 and 60 points leaves edge against a matched paired null flat and
+noisy (−0.5 to +0.1, max |z| 0.74) against a bar that falls from 4.21 to 1.28,
+and mean net R negative at every width. A wider stop shrinks the loss per R,
+because cost drag falls as `1.02 / stop`; it never turns it positive. See
+experiment 27.
+
+The second is still open: keep the bias, drop the retracement requirement, enter
+at market on the signal bar, and see whether the −2.0 timing penalty goes
+neutral. One cell, ~22 minutes.
+
+**Two session-end faults are open and block a clean baseline** (`engine.py:307`).
+The force-close fires only on a bar whose ET hour is 16. Nothing stops an entry
+being taken on that same bar, so 31 trades opened at the cutoff and closed 15
+minutes later, paying $1,691 in costs for it. And when a holiday or half-day
+leaves no such bar, the position rides on: 24 trades held past their session,
+the longest 119 hours through Independence Day, returning +$8,575 net against a
+whole-run gross of +$10,717.50. Both descend from the audit fix that replaced an
+unbounded `hour >= 16` with a bounded check — bounding it was right, anchoring it
+to a bar existing in that hour was not. Fix A with an entry guard, B by driving
+the close from the session calendar, then re-run experiment 26's baseline: 55 of
+its 841 trades are affected.
+
+Beyond that, what remains needs a different instrument, a different data source
+such as order flow, or accepting that 15-minute ES is efficient at this horizon.
 
 ## Confluence Scoring (0-100)
 

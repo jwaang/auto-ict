@@ -40,6 +40,155 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 27 — A wider stop does not pay, and two session-end faults surface (July 2026)
+
+Configurations tried to date: **65**, plus twelve offline re-resolutions of
+experiment 26's own trades, which are twelve correlated looks and are priced as
+one family below. Runtime: 22 min to regenerate the trades, seconds to rescore.
+
+### The question
+
+Experiment 26 measured a +1.2 win-rate-point direction component at z 0.68. The
+break-even bar falls as `1.02 / stop_points`, from about +3.5 points at the
+observed 9.2-point stop to about +1.2 at 30. So the whole question is the shape
+of edge against stop width, and re-resolving the stored trades answers it
+without changing the population.
+
+Pre-registered before looking, after a Codex challenge that changed three things:
+
+- **Two counterfactuals, not one.** Holding each trade's target *multiple*
+  constant while widening the stop pushes the target price out too, so it tests
+  "does the signal work at the same shape, larger scale". The engine picks
+  targets from liquidity, and that price does not move because the stop moved.
+  The primary reading is therefore **fixed target price, stop widened alone**.
+- **Twelve looks are one family.** Requiring z > 3 per look is too loose on top
+  of 65 prior configurations. The threshold was set at max-z ≥ 3.4, and a
+  result had to show a plausible rise-plateau-fade shape rather than one point
+  clearing the bar.
+- **Censoring is reported, not assumed harmless.** The paired null shares the
+  16:00 cutoff but not necessarily the resolution *rate*: if correctly-directed
+  trades resolve at a different rate from wrongly-directed ones, conditioning on
+  resolution biases the direction edge itself. Mean net R over every trade,
+  closing the unresolved at the cutoff, avoids that conditioning.
+
+### The regeneration reproduces experiment 26 exactly
+
+841 trades, gross +$10,717.50, costs $59,860, 503 SL / 261 TP / 77 session-end,
+non-barrier +$25,492.50. Every headline figure matches. That is the fourth
+independent determinism check on this harness.
+
+### A wider stop does not pay
+
+Primary — target held at its original price, stop widened alone:
+
+| stop | barrier n | censored | WR | paired null | edge | z | bar | mean net R | t |
+|---|---|---|---|---|---|---|---|---|---|
+| actual 9.5 | 760 | 9.6% | 33.03 | 33.52 | **−0.5** | −0.29 | 4.21 | −0.177 | −3.60 |
+| 15 | 720 | 14.4% | 44.86 | 45.53 | **−0.7** | −0.36 | 3.14 | −0.094 | −2.38 |
+| 20 | 675 | 19.7% | 54.37 | 54.35 | **0.0** | 0.01 | 2.68 | −0.053 | −1.60 |
+| 30 | 612 | 27.2% | 64.71 | 65.43 | **−0.7** | −0.38 | 2.09 | −0.053 | −2.10 |
+| 40 | 560 | 33.4% | 73.21 | 74.58 | **−1.4** | −0.74 | 1.72 | −0.045 | −2.13 |
+| 60 | 476 | 43.4% | 87.61 | 87.55 | **+0.1** | 0.04 | 1.28 | −0.034 | −2.24 |
+
+Secondary — target multiple held, so the target widens with the stop:
+
+| stop | barrier n | censored | WR | paired null | edge | z | bar | mean net R | t |
+|---|---|---|---|---|---|---|---|---|---|
+| actual 9.5 | 760 | 9.6% | 33.03 | 33.52 | −0.5 | −0.29 | 4.21 | −0.177 | −3.60 |
+| 15 | 659 | 21.6% | 32.02 | 31.44 | +0.6 | 0.32 | 2.43 | −0.106 | −2.41 |
+| 20 | 542 | 35.6% | 31.00 | 30.30 | +0.7 | 0.35 | 1.82 | −0.073 | −1.86 |
+| 30 | 377 | 55.2% | 27.59 | 27.40 | +0.2 | 0.08 | 1.21 | −0.069 | −2.15 |
+| 40 | 246 | 70.7% | 23.17 | 24.54 | −1.4 | −0.50 | 0.91 | −0.062 | −2.30 |
+| 60 | 91 | 89.2% | 19.78 | 16.24 | **+3.5** | 0.92 | 0.61 | −0.042 | −2.15 |
+
+**The primary curve wobbles around zero.** Edge runs −0.5, −0.7, 0.0, −0.7,
+−1.4, +0.1 against a bar that falls from 4.21 to 1.28, and never approaches it.
+Max |z| is 0.74 against a threshold of 3.4. There is no rise, no plateau and no
+fade — it is the flat noisy line predicted under no real edge.
+
+The +3.5 at a 60-point stop in the secondary table is the selection artifact the
+pre-registration named in advance: 91 barrier trades out of 841, 89% censored,
+z 0.92. Best of twelve correlated looks, and it fails the family threshold by a
+factor of nearly four.
+
+**Mean net R is negative at every stop in both tables**, from −0.177 to −0.034,
+at t −1.6 to −3.6. That figure uses every trade and closes the unresolved at the
+cutoff, so it does not condition on resolution at all. A wider stop shrinks the
+loss per R because cost drag falls as `1.02 / stop`; it never turns it positive.
+
+**Backlog item 1 is dead.** The direction component does not grow with stop
+width, so the one positive number measured in this program has no economic value
+at any geometry.
+
+### The validation row failed, and that mattered more
+
+The rescore's actual-stop row should have reproduced experiment 26's barrier
+figures. It did not: 33.03% on 760 barrier trades against the engine's 34.16% on
+764. Same trades, same stops, same targets. The strategy win rate comes from the
+engine while every null in this program is resolved by `Intrabar.first_touch`,
+so a disagreement between those two resolvers is a difference of rulers, not of
+skill — and at ~1.3% of trades it is the same size as the effect being measured.
+
+Resolving all 841 trades both ways gives the disagreement directly:
+
+| engine | first_touch | n |
+|---|---|---|
+| SL_HIT | SL_HIT | 495 |
+| TP_HIT | TP_HIT | 247 |
+| SESSION_END | none | 59 |
+| SESSION_END | SL_HIT | 14 |
+| TP_HIT | none | 14 |
+| SL_HIT | none | 8 |
+| SESSION_END | TP_HIT | 4 |
+
+Two separate faults, both in the session-end close at `engine.py:307`.
+
+**A. The engine opens positions on the 16:00 ET bar and closes them on the
+next one.** The force-close runs before the entry logic on the same bar, and
+nothing stops an entry being taken at the cutoff hour. 31 trades, median hold 15
+minutes, $1,691 of costs paid for it, net −$5,719.
+
+**B. The engine holds through market holidays.** The close fires only on a bar
+whose ET hour is 16. Databento omits minutes with no trade, and on a holiday or
+half-day session no such bar exists, so the position rides into later sessions.
+24 trades, median hold 20.6 hours, longest 119.2 hours — entered 2023-06-30,
+closed 2023-07-05, straight through Independence Day. The others cluster on
+Thanksgiving 2022 and 2023.
+
+Fault B is the one that matters. Those 24 trades returned **+$8,575 net**, and
+14 of the 24 are TP hits. The whole run's gross was +$10,717.50. A sum of the
+same order as the entire gross profit came from trades that broke the documented
+day-trade rule by running for days. It does not rescue the strategy — the run
+still lost 49.1% — but any future configuration that looked gross-positive could
+have been reading this.
+
+Both faults descend from the audit fix recorded at the top of this file, which
+replaced an unbounded `hour >= 16` with a bounded check. Bounding it was right.
+Anchoring it to the existence of a bar in that hour was not.
+
+### What this does not change
+
+The stop-width conclusion stands. Strategy and paired null share one resolver
+and one cutoff in the rescore, so the edge comparison is internally consistent
+even though the absolute win rates differ from the engine's.
+
+### What is now established
+
+1. **A wider stop does not pay.** Edge against a matched paired null is flat in
+   stop width at every geometry tested, and mean net R is negative at all of
+   them. The +1.2 direction component has no economic value.
+2. **The engine and the null model resolve the same trade differently** on 3.5%
+   of trades, for two reasons that are now named and sized.
+3. **Twenty-four trades broke the day-trade rule** and supplied a gross-positive
+   figure of the same order as the whole run's.
+
+Next: fix both faults and re-baseline. Fault A wants an entry guard at the
+cutoff hour; fault B wants the close driven by the session calendar rather than
+by a bar happening to exist. Experiment 26's baseline has to be re-run
+afterwards, because 55 of its 841 trades are affected.
+
+---
+
 ## Experiment 26 — No concept carries edge, and the search is closed (July 2026)
 
 Configurations tried to date: **65**. Runtime: 21.8 min for the decomposition,
