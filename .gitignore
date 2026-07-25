@@ -1,5 +1,5 @@
 .env
-.venv/
+.venv
 venv/
 __pycache__/
 *.pyc
@@ -10,6 +10,9 @@ __pycache__/
 logs/*
 !logs/experiments.jsonl
 datasets/
-historical/
-.claude/
+historical
+# Same trap as logs/ above: .claude/* rather than .claude/, so the loop
+# metaprompt can be un-ignored.
+.claude/*
+!.claude/commands/
 =0.0.27
