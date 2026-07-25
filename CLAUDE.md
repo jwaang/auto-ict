@@ -289,8 +289,28 @@ Do not anchor a session rule on the session-day rollover: after 17:00 ET the
 next bar is the 18:00 evening open, which belongs to the next session day, so
 the close lands an hour late on every ordinary weekday.
 
-What remains needs a different instrument, a different data source such as order
-flow, or accepting that 15-minute ES is efficient at this horizon.
+**The search on 15-minute ES is closed.** Experiment 29 ran the last cheap
+question and it failed hard. Two things came out of it.
+
+The record's explanation of the −2.0 "timing" penalty was wrong: both entry
+helpers `return current_price`, so this strategy has always entered at market on
+the signal bar. Nothing ever waited for a retracement. The zone qualifies the
+setup and anchors the stop. The −2.0 also came from an unpaired null, so it
+absorbs bar location, regime, hour clustering and censoring (5.8% against 15.8%)
+before any notion of timing — treat it as a smell, not a defect to fix.
+
+Dropping the OTE gate on standalone FVG entries (`entry_timing: "signal_bar"` in
+`backtest/rules.py`) gives edge **−5.07 ± 0.67** over 30 seeds on 745 barrier
+trades, z ≈ −3.2, P(edge > 0) = 0%, gross **−$25,598**. After 66 configurations
+producing nothing distinguishable from zero, the first result to clear |z| > 3
+is an anti-edge. The mechanism is displacement, not dilution: standalone FVGs
+fire far more often and take all three concurrency slots, so FVG+OB overlaps
+fall from 663 trades to 106. Loosening a filter replaced the book rather than
+extending it. The OTE gate has no edge of its own, but the population it
+excludes is significantly worse than random.
+
+What remains is not a sweep: a different instrument, a different horizon, or a
+different data source such as order flow.
 
 ## Confluence Scoring (0-100)
 

@@ -40,6 +40,86 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 29 — The OTE gate is the only thing holding the entry up (July 2026)
+
+One pre-registered cell, 20.5 min. The search on 15-minute ES stops here.
+
+### The published explanation was wrong
+
+Experiment 26 attributed a −2.0 point penalty to "a retracement entry into a
+fair value gap: entry against immediate momentum", and the next test was to drop
+the retracement and enter at market instead.
+
+**The code never waited.** `_find_fvg_ob_overlap` and `_find_fvg_entry` both
+`return current_price`. There is no limit order resting in the zone and nothing
+waits for price to come back. The strategy has always entered at market on the
+signal bar; the zone qualifies the setup and anchors the stop, nothing more. The
+measurement stood, the explanation for it did not.
+
+Codex also took the −2.0 apart. It came from an *unpaired* null, so it absorbs
+bar location, volatility regime, hour clustering, censoring — real entries are
+censored 5.8% against 15.8% for uniform sampling — and setup-conditioned
+geometry, with entry timing only the last of those. It is a diagnostic smell,
+not a measured defect, and not a quantity to go and fix.
+
+That left one honest question: do standalone FVG entries carry edge without the
+OTE gate? `entry_timing` in `backtest/rules.py` now selects it.
+
+### They carry a large negative one
+
+Same bias, same geometry, same span, same 30-seed paired null:
+
+| cell | trades | barrier n | WR | **edge** | sd | P(edge>0) | gross | net |
+|---|---|---|---|---|---|---|---|---|
+| `retracement` (exp 28) | 807 | 729 | 33.33 | **−0.22** | 0.72 | 37% | +$5,030 | −$52,113 |
+| `signal_bar` | 787 | 745 | **20.40** | **−5.07** | 0.67 | **0%** | **−$25,598** | −$87,611 |
+
+Sampling error on 745 barrier trades is 1.6 points, so −5.07 is **z ≈ −3.2**.
+After 65-plus configurations that produced nothing distinguishable from zero,
+the first result to clear |z| > 3 is an anti-edge.
+
+### The mechanism is displacement, not dilution
+
+The setup mix does not simply gain standalone FVGs, it loses the overlaps:
+
+| setup type | retracement | signal_bar |
+|---|---|---|
+| FVG+OB overlap | 663 | **106** |
+| FVG+OTE | 144 | 26 |
+| Fair Value Gap | 0 | **655** |
+
+The entry waterfall still tries FVG+OB overlap first, so the overlaps were not
+out-competed on quality. They were crowded out by the three-position concurrency
+cap: standalone FVGs fire far more often, take the slots, and the better setup
+finds no room when it arrives. Loosening a filter did not add marginal trades to
+the existing book. It replaced the book.
+
+That also explains the cost line. Cost per trade rises from $70.81 to $78.80 and
+gross turns negative, so costs are no longer eating a small edge — there is no
+gross edge left to eat.
+
+### Read what this does and does not say
+
+It does **not** say the OTE gate has edge. Experiment 26 measured FVG+OTE at
++0.4 points on 142 barrier trades, which is nothing. What it says is that the
+gate is doing real work as a *filter*: the population it excludes is
+significantly worse than random, so removing it makes the strategy worse than
+the coin flip it was already indistinguishable from.
+
+### The search stops here
+
+The stopping rule was registered before the run, on Codex's argument: near zero,
+negative, or merely +1 point means stop parameter search on 15-minute ES. It
+returned −5.07 at P(edge > 0) = 0%.
+
+Every cheap question from experiment 26 is now closed. Across 66 configurations
+nothing positive has ever been measured, the one figure that looked positive was
+one seed above a mean inside noise, and the only significant result is negative.
+What remains is not a sweep: a different instrument, a different horizon, or a
+different data source such as order flow.
+
+---
+
 ## Experiment 28 — The only positive component in the program was a bug (July 2026)
 
 Runtime: 20.5 min to re-baseline, seconds for the rest. One code change, ten new
