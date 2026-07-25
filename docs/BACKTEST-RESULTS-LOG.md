@@ -81,6 +81,60 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 37 — The FVG is a magnet, not a springboard (July 2026)
+
+The FVG claim has two parts: price retraces into the gap, **and then continues in
+the gap's direction**. Part one was confirmed in experiment 36. Part two is the
+tradeable half and had never been tested, because every earlier measurement
+started at the gap's *formation* rather than at the *return*, which is the actual
+trigger.
+
+Measured on 5-minute ES over the training span. 43,536 gaps, of which **40,413
+were returned to**, each compared against a geometry-matched control zone that
+price also returned to — otherwise the comparison measures "does price come
+back" rather than "does this zone work".
+
+| horizon | continuation after return | matched control | difference | z |
+|---|---|---|---|---|
+| 1 | 47.46% | 47.97% | −0.50 | −1.31 |
+| 2 | 47.98% | 48.56% | −0.58 | −1.54 |
+| 4 | 48.40% | 49.23% | −0.84 | −2.28 |
+| 6 | 48.66% | 48.97% | −0.31 | −0.85 |
+| 12 | 48.71% | 49.83% | **−1.12** | **−2.99** |
+| 24 | 49.22% | 49.92% | −0.70 | −1.92 |
+
+**Every difference is negative**, and the absolute level matters as much as the
+comparison: continuation runs 47-49%, below a coin flip at every horizon.
+
+So the two halves of the FVG claim separate cleanly:
+
+| claim | result |
+|---|---|
+| price returns to the gap to rebalance | **holds**, +4.30 points over control, z +15.05 |
+| price then continues in the gap's direction | **fails**, −0.5 to −1.1 against control, never above 50% |
+
+**The FVG is a magnet, not a springboard.** Price does come back to the
+imbalance — that part of the methodology describes something real. It simply
+does not bounce from it. It arrives and keeps going.
+
+That is the more useful negative result, because it is specific. An entry model
+built on "wait for the retracement into the FVG, then trade the continuation" is
+trading the wrong half of a real phenomenon: the reliable half gets your limit
+order filled, and the unreliable half is supposed to pay for it.
+
+### Consequent encroachment, weakly positive and not yet trusted
+
+Splitting the returns by depth: those reaching the 50% midpoint continue
++1.62, +1.20, +0.02, +0.71, +1.25 and +0.95 points more often than those touching
+only the near edge.
+
+Consistently positive but small, with no interval computed, and plausibly an
+artifact — a return that reaches the midpoint has by construction travelled
+further, so the split conditions on movement rather than on the level. It needs a
+test with depth as the only variable before it counts as anything.
+
+---
+
 ## Experiment 36 — Both real signals are sub-spread, and the reason is scale (July 2026)
 
 The magnet claim strengthens at a shorter window, which is the right shape: with

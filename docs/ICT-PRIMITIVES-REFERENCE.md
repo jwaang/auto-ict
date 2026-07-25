@@ -49,10 +49,17 @@ continues in the gap's direction.** Both halves matter and they are separate
 tests. The guide is explicit: "price is expected to retrace INTO this gap (fill
 it) *before continuing up*".
 
-**Status.** Part one holds: real gaps fill 89.99% within 48 bars against 85.69%
-for a geometry-matched control, paired difference **+4.30 points, z +15.05**,
-n=43,536 on 5-minute ES. Part two — continuation after the fill — is the
-tradeable half and is tested in the conditional programme.
+**Status — the two halves separate.** Part one **holds**: real gaps fill 89.99%
+within 48 bars against 85.69% for a geometry-matched control, paired difference
+**+4.30 points, z +15.05**, n=43,536. Part two **fails**: conditional on price
+returning to the gap (n=40,413), continuation in the gap's direction runs
+47-49%, below a coin flip at every horizon and −0.5 to −1.1 points *below* a
+matched control zone price also returned to.
+
+**The FVG is a magnet, not a springboard.** Price comes back to the imbalance and
+keeps going. An entry model waiting for the retracement and then trading the
+continuation is relying on the half that does not work to pay for the half that
+does.
 
 **Not a claim:** that price rises after a bullish FVG forms. Measured flat, and
 irrelevant.
