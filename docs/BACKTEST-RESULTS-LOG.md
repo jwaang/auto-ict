@@ -81,6 +81,81 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 42 — The prescribed entry points the right way and cannot be powered (July 2026)
+
+Experiment 41 left one lever untested. Everything measured so far entered at the
+probe bar, which the source explicitly calls not a trade; the prescribed entry
+waits for a lower-timeframe MSS and enters on the retest of the PD array created
+by the displacement leg. That is a **path intervention** — it moves entry price
+relative to a fixed invalidation level, changing R:R directly rather than
+changing direction accuracy.
+
+Three arms, identical stop anchored on the probe candle, so they differ only in
+entry. 15-minute, training span, cell = bias agrees.
+
+### MSS built to the specification
+
+`research/ict_mss.py`, with 14 tests. A swing broken by a **body close** past the
+extreme — "a wick poke is not an MSS" — where the breaking candle is a
+displacement. `smc_adapter.detect_bos_choch` requires neither, so everything
+previously measured through it was CHoCH at best.
+
+### The results
+
+| arm | disp 2.0 | disp 1.5 | disp 1.0 | disp 0.75 | fill rate |
+|---|---|---|---|---|---|
+| **A** probe bar | −0.127 | −0.127 | −0.127 | −0.127 | 100% |
+| **B** MSS close | −0.228 | −0.004 | −0.029 | −0.063 | 2.4-14.6% |
+| **C** PD array retest | — | — | **+0.277** | **+0.096** | **1.9-2.4%** |
+
+Arm A reproduces experiment 41 to four decimals (−0.1268), which is the control
+confirming the new harness measures the same population before the entry rule
+changes.
+
+**The ordering moves as predicted.** A → B → C runs −0.127 → about zero →
+positive, at every threshold where C is measurable. That is the registered
+mechanism: confirmation helps somewhat, the retest price helps more, because
+entering nearer a fixed stop raises R:R.
+
+### And it cannot be confirmed
+
+Arm C is **n=178 at a 1.9% fill rate**, and every interval spans zero — the best
+cell is [−0.078, +0.565]. Against the pre-registered rule of `|z| > 3`,
+`n >= 5000` and independent-timeframe replication, it misses the sample floor by
+a factor of 28.
+
+**This is recorded as unknown, not as a weak positive.** It has the exact shape of
+the two results already retracted here: the cap-6 cell at +2.24 that became −8.87
+out of sample, and the exceptional FVG tier at +3.22 that became −0.08 under
+power. Both were attractive small-n cells with wide intervals, and both were
+reported before replication.
+
+The displacement threshold was swept rather than chosen, because the source's
+"ideally creates a fair value gap" makes it a specification ambiguity rather than
+a parameter. All four settings are above. Arm C is positive at both thresholds
+where it has enough samples to report, which is mildly reassuring and nowhere
+near sufficient.
+
+### The structural finding
+
+**ICT's full prescribed sequence is too rare to validate on available data.**
+
+It requires a sweep, then an MSS within twelve bars in the right direction, then a
+retrace into the displacement leg's FVG. That chain completes on **1.9% of
+qualifying setups**. Three and a half years of 15-minute ES yields 178 samples
+where 5,000 are needed.
+
+Powering it would take roughly a hundred years at this timeframe, or a move to
+1-minute data where cost drag is 0.515R and already sank arm A there. So the
+sequence sits in a gap: **frequent enough to trade, too rare to prove**, on the
+only timeframe where costs permit trading at all.
+
+That is a different kind of negative from the rest of this log. The earlier
+results were measured and refuted. This one is unfalsifiable with the data
+available, and saying so is the honest end of it.
+
+---
+
 ## Experiment 41 — The sweep/run edge is an endpoint edge, and does not survive barriers (July 2026)
 
 Experiment 40's sweep/run result is the only finding here to pass `|z| > 3`,
