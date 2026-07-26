@@ -81,6 +81,69 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 45 — OTE is not a zone: depth helps monotonically (July 2026)
+
+The first properly powered depth test — 22,916 to 33,444 samples per band on
+1-minute, comfortably past the 5,000 floor — and the first decided verdict since
+the sweep/run rule.
+
+### Method: first touch, after confirmation
+
+Every sample is taken at the bar a depth band is **first reached**, after the
+leg's confirmation bar. Binning by where a retracement *ended* would condition on
+the future, which is the look-ahead that inflated three earlier results here.
+One retracement can therefore contribute to several bands, and that is correct:
+when price touched 62% nobody knew whether it would halt or run to 85%.
+
+Legs require a displacement, per the source's own precondition that OTE is valid
+only after one. 2,789 legs of 12,668 were dropped at 5m for lacking it.
+`research/depth_claims.py` with 26 tests, boundaries pinned at exactly 61.8 and
+79.
+
+### The curve is monotone, not peaked
+
+Forward continuation in the leg direction, h=4:
+
+| band | 1m (n) | 1m edge | 5m edge |
+|---|---|---|---|
+| <38.2 | 26,810 | **−2.48 (z −8.2)** | −1.86 (z −2.8) |
+| 38.2-61.8 | 28,913 | +0.42 | +0.18 |
+| **61.8-79 (OTE)** | 25,797 | **+0.73** | **+0.29** |
+| 79-100 | 22,916 | **+1.68 (z +4.9)** | **+1.70 (z +2.3)** |
+| >100 "invalidated" | 31,694 | **+1.55 (z +5.2)** | +0.18 |
+
+**The OTE band is not a peak.** The deeper 79-100 band beats it on both
+timeframes, and on 1-minute the band ICT calls *invalidated* also beats it. The
+claim that "past 79% weakens the setup" is contradicted — past 79% is where the
+best numbers sit.
+
+The shape passes the three-part rule: n well above 5,000, |z| > 3 on the shallow
+and deep bands, and the same ordering on an independent timeframe.
+
+### What ICT gets right, and what it gets wrong
+
+**Right — do not chase shallow retracements.** The <38.2 band is significantly
+negative on both timeframes (−2.48 at z −8.2 on 1m). Entering after a shallow
+pullback is measurably worse than chance, which is exactly the advice given.
+
+**Wrong — there is no optimal zone.** Depth helps monotonically. The mechanism is
+mundane: a deeper retracement leaves more of the leg left to travel, so the
+"zone" is an artifact of a real but continuous relationship. That explains why
+practitioners believe in it — entries at 70% *do* beat entries at 30% — while the
+specific 61.8-79 band has no special property.
+
+This was the pre-registered alternative, written down before the run precisely so
+that finding it could not be reframed afterwards.
+
+### The usual caveat
+
+These are direction counts without costs. The magnitudes are +0.7 to +1.7 points,
+which is the same sub-spread territory as everything else in this log — the
+median ES structure at these timeframes is 1-3 points against a 1.02-point round
+turn. The verdict is about the *claim*, not about tradeability.
+
+---
+
 ## Experiment 44 — The order-block family, and two look-ahead bugs caught by the +5 rule (July 2026)
 
 The order block, breaker and mitigation block, built to the four-condition

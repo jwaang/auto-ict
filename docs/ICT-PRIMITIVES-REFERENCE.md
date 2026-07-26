@@ -259,6 +259,26 @@ The 61.8%–79% retracement of a swing; 70.5% is the sweet spot. Valid only afte
 displacement. Past 79% weakens the setup; failing to reach 61.8% means do not
 chase. **Control is other retracement depths**, since depth is the variable.
 
+**Status — the zone is refuted, one of its rules holds.** Measured at first touch
+of each band after leg confirmation, n=22,916-33,444 per band on 1m:
+
+| band | 1m edge (h4) | 5m edge |
+|---|---|---|
+| <38.2 | **−2.48 (z −8.2)** | −1.86 |
+| 38.2-61.8 | +0.42 | +0.18 |
+| **61.8-79 (OTE)** | +0.73 | +0.29 |
+| 79-100 | **+1.68 (z +4.9)** | **+1.70** |
+| >100 "invalid" | **+1.55 (z +5.2)** | +0.18 |
+
+**Monotone, not peaked.** The deeper 79-100 band beats OTE on both timeframes,
+and on 1m so does the band ICT calls invalidated — so "past 79% weakens the
+setup" is contradicted. But **"do not chase shallow" is confirmed**: the <38.2
+band is significantly negative on both timeframes.
+
+Depth helps continuously because a deeper retracement leaves more of the leg to
+travel. That explains the belief — 70% really does beat 30% — without the
+61.8-79 band having any special property. Experiment 45.
+
 ---
 
 ## Displacement
