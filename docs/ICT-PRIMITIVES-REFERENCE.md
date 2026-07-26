@@ -326,8 +326,22 @@ enter at the tap; stop beyond the creating candle's wick; target the next
 liquidity pool at roughly 1:3.
 
 **"A liquidity raid alone is not a signal."** The whole sequence must complete
-inside the one-hour window. Claims **55-65% at 1:3**, about +1.4R per trade — an
-extraordinary claim and the most falsifiable thing in the methodology.
+inside the one-hour window. Claims **55-65% at 1:3**, about +1.4R per trade.
+
+**Status — refuted twice over.** At the claim's own 1:3 geometry on 1-minute,
+n=720: measured win rate **21.94%** against the claimed 55-65%, which is 21
+standard errors away, and slightly below even the 25% fair-barrier expectation.
+
+Separately, the prescribed stop — beyond the creating candle's wick — is **0.75
+points** on 1-minute against a 1.02-point round turn, so **cost is 1.36R per
+trade** and break-even rises from 25% to **59%**. Even if the claimed win rate
+were true, the bottom of its range loses money. **The strategy's risk unit is
+smaller than the cost of trading it.** Experiment 47.
+
+**Timeframe is forced, not chosen.** A one-hour window holds 4 bars at 15m and 12
+at 5m against the ~15 a structure shift needs, so the sequence cannot exist
+there — the repo's earlier zero-trade result was arithmetic, not evidence. Only
+1-minute (60 bars) can hold it.
 
 ### The 2022 model
 1. daily bias on D/4H before the session

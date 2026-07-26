@@ -81,6 +81,73 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 47 — Silver Bullet is refuted twice over (July 2026)
+
+The only ICT claim with a specific number attached: **55-65% at 1:3**, roughly
++1.4R per trade. Tested at its own stated geometry.
+
+### Why the repo's earlier test was not a test
+
+`backtest/strategies/common.py` records zero Silver Bullet trades over a full
+year at 15m and 5m. That was **arithmetic, not evidence**: a one-hour window
+holds 4 bars at 15m and 12 at 5m, against the ~15 a structure shift needs to
+form, confirm and break. A one-hour window holds 60 one-minute bars, so 1-minute
+is the only execution timeframe on which the sequence can exist — which is
+presumably why the source specifies 1m/3m/5m and never 15m.
+`research/sb_windows.py` encodes this with 24 tests.
+
+### At the claim's own 1:3 geometry
+
+n=720, median R:R exactly 3.00, 1-minute execution, training span:
+
+| | |
+|---|---|
+| **claimed win rate** | **55-65%** |
+| **measured** | **21.94%** |
+| zero-cost break-even at 1:3 | 25.00% |
+| **break-even at realised cost** | **59.00%** |
+| median risk | **0.75 points** |
+| **median cost/R** | **1.360** |
+| mean net R | **−2.099** [−2.357, −1.822] |
+
+**Refutation one — the win rate.** 21.94% against a claim of 55-65%. At n=720 the
+standard error is 1.54 points, so the claim sits **21 standard errors away**. The
+`n >= 5000` floor in this log exists for detecting *small* edges of 1-4 points;
+refuting a 33-point gap needs far less. This is decided, not unknown — and the
+measured rate is also slightly *below* the 25% fair-barrier expectation, so the
+entry does not beat chance either.
+
+**Refutation two — the stop is smaller than the spread.** Silver Bullet places
+stops beyond the creating candle's wick, which on 1-minute is **0.75 points**
+against a 1.02-point round turn. Cost is therefore **1.36R per trade**, a loss is
+−2.36R, and break-even rises from 25% to **59%**. Even if the claimed 55-65% were
+true, the bottom of that range loses money and the top barely breaks even.
+
+That second point is the sharpest form of the scale constraint found anywhere in
+this programme. Earlier results were *signals* smaller than the spread. Here the
+strategy's own **risk unit** is smaller than the cost of trading it, so the
+geometry is self-defeating independent of any edge.
+
+NY AM is the least bad window at −1.478 against London's −2.513, which is
+directionally consistent with the source calling it highest-probability. All
+three lose.
+
+### Two corrections to this experiment's own method
+
+**The control did not test what was claimed for it.** The 5-minute cell was
+predicted to produce near-zero setups from the "all legs in window" reading, but
+the implementation uses "MSS and FVG in window" with swing formation allowed to
+precede — the reading the repo documents as sensible. It produced 77 trades. The
+implementation is defensible; the prediction attached to it described a different
+design.
+
+**The first run measured a 1:3 claim at 1:6.8.** Letting the liquidity target set
+the geometry gave a realised R:R of 6.80, where a 13.13% win rate is almost
+exactly the 12.82% fair barriers predict — a fine result about that geometry and
+no test of the claim. Fixing the target at 3R is the version reported above.
+
+---
+
 ## Experiment 46 — Consequent encroachment is not a level either, and "zone" is the category error (July 2026)
 
 The largest samples in this programme — **168,171 to 195,066 per level** on
