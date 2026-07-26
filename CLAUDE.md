@@ -258,12 +258,110 @@ coin flip at the moments this strategy chooses does 2.0 points worse than a coin
 flip at random moments, which is what a retracement entry into an FVG buys: entry
 against immediate momentum. The bias rule then adds 1.2 points back.
 
-That makes one test worth running before concluding: keep the bias, drop the
-retracement requirement, enter at market on the signal bar, and see whether the
-timing penalty goes neutral. One cell, ~22 minutes. It will not on its own clear
-the +3.5 bar. Beyond it, what remains needs a different instrument, a different
-data source such as order flow, or accepting that 15-minute ES is efficient at this
-horizon.
+**Both of those are now closed, and the +1.2 was a bug.** Experiment 27 traced
+it to the day-trade cutoff at `engine.py:307`, which fired only on a bar whose
+ET hour was 16. Databento omits minutes with no trade, so on the 37 of 894
+weekday sessions that are US holidays or half-days no such bar existed and
+positions were carried for days — the longest 119 hours through Independence
+Day. Those 24 carries returned +$9,958.50 gross against a whole-run gross of
++$10,717.50. Nothing stopped an entry during that hour either, so 31 more opened
+at the cutoff and 19 were liquidated one bar later.
+
+Experiment 28 fixed both — close on the last bar at or before the cutoff on the
+bar's own session day, refuse entries past it — and re-ran the baseline. Every
+prediction registered beforehand held: gross fell to +$5,030.50, trades to 807,
+entries in the cutoff hour to zero, cross-session holds to zero, longest hold to
+21.8 hours, and net got *worse* at −$52,113.25. The engine and
+`Intrabar.first_touch` now resolve **all 807 trades identically**, against 40
+disagreements before, so strategy and benchmark finally share one ruler.
+
+On the direction edge, measure across seeds and not on one. A 6000-draw paired
+null carries about 0.7 win-rate points of noise, which is most of the effect
+being argued about. Over thirty seeds the pre-fix edge is **+0.61 ± 0.66** and
+the post-fix edge is **−0.22 ± 0.72**, with the null unchanged at 33.55 on both
+because the null was always resolved by `Intrabar.first_touch` and only the
+engine was broken. Experiment 26's published +1.2 sits inside the pre-fix range
+and was one favourable seed. So no positive direction edge survives, the fix
+accounts for a −0.83 shift, and nothing here shows direction skill is negative.
+Costs are now 11.4x gross.
+
+Do not anchor a session rule on the session-day rollover: after 17:00 ET the
+next bar is the 18:00 evening open, which belongs to the next session day, so
+the close lands an hour late on every ordinary weekday.
+
+**The search on 15-minute ES is closed.** Experiment 29 ran the last cheap
+question and it failed hard. Two things came out of it.
+
+The record's explanation of the −2.0 "timing" penalty was wrong: both entry
+helpers `return current_price`, so this strategy has always entered at market on
+the signal bar. Nothing ever waited for a retracement. The zone qualifies the
+setup and anchors the stop. The −2.0 also came from an unpaired null, so it
+absorbs bar location, regime, hour clustering and censoring (5.8% against 15.8%)
+before any notion of timing — treat it as a smell, not a defect to fix.
+
+Dropping the OTE gate on standalone FVG entries (`entry_timing: "signal_bar"` in
+`backtest/rules.py`) gives edge **−5.07 ± 0.67** over 30 seeds on 745 barrier
+trades, z ≈ −3.2, P(edge > 0) = 0%, gross **−$25,598**. After 66 configurations
+producing nothing distinguishable from zero, the first result to clear |z| > 3
+is an anti-edge. The mechanism is displacement, not dilution: standalone FVGs
+fire far more often and take all three concurrency slots, so FVG+OB overlaps
+fall from 663 trades to 106. Loosening a filter replaced the book rather than
+extending it. The OTE gate has no edge of its own, but the population it
+excludes is significantly worse than random.
+
+**The timeframe axis is closed too, on power.** Experiment 30 found the
+`timeframes` sweep had never been run and that 30m and 1h had never been tested.
+Costs behaved exactly as the model says — stops widened 9.36 to 12.92 to 14.21
+points, cost share fell from 10.9% of R to 7.2%, the break-even bar fell from
++4.24 to +2.70 — and gross went the other way, +$5,030 to −$4,712. A cheaper bar
+buys nothing when there is no edge to protect. Note ATR scales with about the
+square root of time, so four times the bar width bought only 1.5 times the stop.
+
+The general result matters more than the cells. **The economic bar falls with
+the timeframe and the statistical hurdle rises faster**, because trade count
+falls: three standard errors is +5.2 win-rate points at 15m, +8.7 at 30m and
++16.8 at 1h. There is no timeframe on this instrument where a marginal edge
+could be both real and detectable in the available history.
+
+The 1h cell returned edge +3.73 against its own bar of +2.70 with 100% of seeds
+positive, and it is nothing: seed spread measures null noise (~0.6 points), while
+sampling error on 72 barrier trades is 5.6, so the interval is about ±11 and z is
++0.66. **Never read `P(edge > 0)` across seeds as significance** — it answers a
+different question from the one that matters.
+
+**The exit is not the problem either.** `TRADE_MANAGEMENT_ENABLED` had been
+False for all 68 configurations and appeared zero times in the experiment log,
+and it was bound at import time so it was never sweepable — now routed through
+`params.get("trade_management", ...)`. Managed exits change the payoff
+functional, so barrier scoring and the paired null do not apply; the statistic is
+the per-trade paired delta in net R on identical entries. Result: **+0.0114R,
+95% bootstrap [−0.0419, +0.0632]**, median exactly zero, 73.7% of trades
+unchanged. Mean R is −0.1044, so break-even needs about +0.10R and management
+supplies a tenth of it. See experiment 31.
+
+**The concurrency cap is not a lever either, and 2025 is significantly negative.**
+`MAX_CONCURRENT_POSITIONS` was the third constant found bound at import time and
+never swept. On the training span, raising it to 6 gave the best cell ever
+measured here — edge +2.24, gross +$12,372 — and it did not reproduce: on 2025,
+out of sample, cap 6 scored **−8.87 against cap 3's −9.29**. Selection noise.
+
+Two cautions from it. **The rejection funnel counts bar-level rejections, not
+distinct opportunities** — "max concurrent positions" appeared 912 times against
+807 trades, but raising the cap added only ~130 trades, so the funnel badly
+overstates what loosening a gate would admit. And `P(edge > 0)` across null seeds
+is *not* significance; it hit 100% at every cap while z stayed near 1.
+
+**Every statistically significant result this program has produced is negative:**
+experiment 29's −5.07 for dropping the OTE gate, and cap 6 on 2025 at z −3.10.
+Seventy-two configurations, two observations past |z| > 3, both worse than
+random. See experiment 32.
+
+Two things worth carrying forward from experiment 31. A partial close does **not** add cost
+in this model — total closed quantity is 100% either way, spread and slippage are
+charged on quantity filled, and commission is per contract not per ticket. And
+the **three-position concurrency cap has now shaped three separate results**
+(experiments 29, 30 and 31); it has never been varied, so it is the next thing to
+test.
 
 ## Confluence Scoring (0-100)
 
@@ -351,6 +449,18 @@ When `TRADE_MANAGEMENT_ENABLED = True` in config (default: False):
 
 - `config.py` — All constants: risk %, ATR params, kill zone times, confluence weights, swing lengths, spread/slippage, trade management, per-asset SL multipliers
 - `ict/smc_patched.py` — Vendored + patched SMC library (no look-ahead bias). Do not modify.
+- `docs/ICT-ON-ES-CONCLUSIONS.md` — **start here.** What ICT concepts actually do
+  on ES: the scoreboard of every claim tested, the two findings that generalise
+  (zone is a category error, and every real effect is smaller than the spread),
+  why a directional edge is not a trading edge, and the eight measurement bugs —
+  seven of which made results look better than reality.
+- `docs/ICT-PRIMITIVES-REFERENCE.md` — **read before designing any primitive
+  experiment.** What each primitive actually claims, the correct test for it, and
+  the mistakes already made. Almost no ICT primitive is a directional signal that
+  fires on formation: order blocks, FVGs, breakers and IFVGs are PD arrays, whose
+  claim is conditional on price *returning* to the zone. Also records the scale
+  constraint — the median FVG is 0.75 points wide against a 1.02-point round turn,
+  so a primitive can be real and untradeable at once, and two are.
 - `docs/ICT_Trading_Strategies_Combined_Research.md` — ICT methodology reference (2022 Model, Silver Bullet, Power of 3, etc.)
 - `logs/trades.json` — Trade journal (append-only)
 - `logs/backtest_trades.csv` — Trade log CSV with reasoning, concepts, bias, and outcome (auto-generated by backtests for manual review)

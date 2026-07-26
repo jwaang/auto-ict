@@ -3,6 +3,47 @@
 Record of backtesting experiments, configurations, and findings.
 Last updated: July 2026.
 
+> ## Program conclusion, July 2026
+>
+> **On ES 15-minute data from 2021-07-25 to 2024-12-31, this mechanised ICT
+> methodology is indistinguishable from a matched random-direction strategy
+> before costs, and decisively untradable after them.**
+>
+> Sixty-eight configurations. The best cleaned directional result is **−0.22
+> win-rate points** over thirty seeds at n=729, against a break-even bar of
+> **+4.24**. Individual concepts sit at +0.2 (n=622) and +0.4 (n=142). No bias
+> rule, trigger, geometry, stop width, timeframe or entry gate has cleared its
+> own bar.
+>
+> Two structural findings explain why further search on this instrument is not
+> worth running.
+>
+> **Costs are ~1.02 points per round turn and independent of position size**, so
+> they are 10.9% of R at the observed 9.4-point stop. Break-even needs
+> `cost_share / (1 + m)` of edge, about +4 points. Widening the stop lowers that
+> (experiment 27) and so does coarsening the timeframe (experiment 30); neither
+> creates edge, and a cheaper bar buys nothing when there is none to protect.
+>
+> **The statistical hurdle has bound in every cell ever run.** Three standard
+> errors of the barrier win rate is +5.2 points at n=729, +8.7 at n=262 and
+> +16.8 at n=72. Coarsening the timeframe lowers the economic bar and raises the
+> statistical hurdle faster. Even at n=5000 the hurdle is +2.6, so an edge under
+> about +3.8 is untradable and one under +2.6 is undetectable. A public retail
+> methodology showing a clean +4-point directional edge on a liquid index future
+> after costs would be surprisingly large.
+>
+> What this program did produce is a measurement harness that can be trusted:
+> matched paired nulls, barrier-only scoring, cost accounting that reconciles by
+> construction, and — since experiment 28 — exact agreement between the engine
+> and the resolver used for every benchmark. Two published conclusions were
+> wrong and were found by that harness rather than survived by it.
+>
+> **The 2026-01 to 2026-07 holdout has never been opened.** No cell has ever run
+> past 2024-12-31. There is no candidate worth spending it on.
+>
+> Continuing requires a different instrument, or a different data source such as
+> order flow. Neither is on disk.
+
 > ## Every result below experiment 14 is superseded
 >
 > A July 2026 audit found seven bugs that change P&L. Numbers recorded before
@@ -37,6 +78,1661 @@ Last updated: July 2026.
 >    bias and premium/discount were all computed across two sessions.
 >
 > Backtests also run about 4x faster — see the entry below.
+
+---
+
+## Experiment 47 — Silver Bullet is refuted twice over (July 2026)
+
+The only ICT claim with a specific number attached: **55-65% at 1:3**, roughly
++1.4R per trade. Tested at its own stated geometry.
+
+### Why the repo's earlier test was not a test
+
+`backtest/strategies/common.py` records zero Silver Bullet trades over a full
+year at 15m and 5m. That was **arithmetic, not evidence**: a one-hour window
+holds 4 bars at 15m and 12 at 5m, against the ~15 a structure shift needs to
+form, confirm and break. A one-hour window holds 60 one-minute bars, so 1-minute
+is the only execution timeframe on which the sequence can exist — which is
+presumably why the source specifies 1m/3m/5m and never 15m.
+`research/sb_windows.py` encodes this with 24 tests.
+
+### At the claim's own 1:3 geometry
+
+n=720, median R:R exactly 3.00, 1-minute execution, training span:
+
+| | |
+|---|---|
+| **claimed win rate** | **55-65%** |
+| **measured** | **21.94%** |
+| zero-cost break-even at 1:3 | 25.00% |
+| **break-even at realised cost** | **59.00%** |
+| median risk | **0.75 points** |
+| **median cost/R** | **1.360** |
+| mean net R | **−2.099** [−2.357, −1.822] |
+
+**Refutation one — the win rate.** 21.94% against a claim of 55-65%. At n=720 the
+standard error is 1.54 points, so the claim sits **21 standard errors away**. The
+`n >= 5000` floor in this log exists for detecting *small* edges of 1-4 points;
+refuting a 33-point gap needs far less. This is decided, not unknown — and the
+measured rate is also slightly *below* the 25% fair-barrier expectation, so the
+entry does not beat chance either.
+
+**Refutation two — the stop is smaller than the spread.** Silver Bullet places
+stops beyond the creating candle's wick, which on 1-minute is **0.75 points**
+against a 1.02-point round turn. Cost is therefore **1.36R per trade**, a loss is
+−2.36R, and break-even rises from 25% to **59%**. Even if the claimed 55-65% were
+true, the bottom of that range loses money and the top barely breaks even.
+
+That second point is the sharpest form of the scale constraint found anywhere in
+this programme. Earlier results were *signals* smaller than the spread. Here the
+strategy's own **risk unit** is smaller than the cost of trading it, so the
+geometry is self-defeating independent of any edge.
+
+NY AM is the least bad window at −1.478 against London's −2.513, which is
+directionally consistent with the source calling it highest-probability. All
+three lose.
+
+### Two corrections to this experiment's own method
+
+**The control did not test what was claimed for it.** The 5-minute cell was
+predicted to produce near-zero setups from the "all legs in window" reading, but
+the implementation uses "MSS and FVG in window" with swing formation allowed to
+precede — the reading the repo documents as sensible. It produced 77 trades. The
+implementation is defensible; the prediction attached to it described a different
+design.
+
+**The first run measured a 1:3 claim at 1:6.8.** Letting the liquidity target set
+the geometry gave a realised R:R of 6.80, where a 13.13% win rate is almost
+exactly the 12.82% fair barriers predict — a fine result about that geometry and
+no test of the claim. Fixing the target at 3R is the version reported above.
+
+---
+
+## Experiment 46 — Consequent encroachment is not a level either, and "zone" is the category error (July 2026)
+
+The largest samples in this programme — **168,171 to 195,066 per level** on
+1-minute — and a direct replication of experiment 45 on an independent claim.
+
+### CE is not a peak
+
+Continuation in the gap's direction, measured at the bar each level is **first
+reached** after the gap's third candle closes:
+
+| level | 1m h4 | 1m h12 | 1m h24 | 5m h4 |
+|---|---|---|---|---|
+| near edge | −0.08 | +0.04 | −0.01 | +0.31 |
+| 25% | +0.75 (z 6.2) | +0.51 (z 4.6) | +0.28 | +0.25 |
+| **CE 50%** | **+0.82 (z 7.0)** | **+0.57 (z 5.1)** | **+0.31 (z 3.1)** | +0.19 |
+| 75% | +0.97 (z 7.9) | +0.64 (z 5.5) | +0.36 (z 3.3) | +0.48 |
+| far edge | +0.96 (z 7.2) | +0.66 (z 5.6) | +0.40 (z 3.6) | +0.49 |
+| **mitigated >100%** | **+1.51 (z 10.6)** | **+0.99 (z 7.6)** | **+0.54 (z 4.5)** | **+0.59** |
+
+**Monotone at every horizon.** The 50% midpoint is beaten by 75%, by the far
+edge, and most sharply by the **fully mitigated** region — which the methodology
+holds is no longer valid at all. That is where the strongest number sits, at
+z +10.6.
+
+The 5-minute series shows the same ordering more weakly, with mitigated again
+highest, so the shape replicates on an independent timeframe.
+
+### Two zone claims, one category error
+
+Experiment 45 found the same thing for OTE: monotone with depth, no peak at
+61.8-79%, and the band ICT calls *invalidated* among the best. Experiment 46 now
+finds it for CE: monotone with depth, no peak at 50%, and the *mitigated* region
+best of all.
+
+**These are not two nulls. They are one finding.** ICT describes these as zones —
+a band or a level where price reacts — and in both cases the data shows a
+**continuous relationship with depth** that runs straight through the boundary
+the methodology treats as a limit. The mechanism is the same and it is mundane:
+the deeper price has travelled back, the more of the move is left to retrace in
+the expected direction.
+
+That also explains why practitioners believe it. Entering at CE genuinely does
+beat entering at the near edge (+0.82 against −0.08), and entering at 70% of a
+retracement genuinely does beat entering at 30%. The experience that produces the
+rule is real. The boundary it gets attached to is not.
+
+**Zone is the category error.** What exists is a gradient.
+
+### What this does not say
+
+It does not rescue the fair value gap as an entry — experiment 37 refuted the
+reaction against a matched control, and this measures only which depth inside a
+failing zone is least bad.
+
+And the magnitudes remain sub-spread: +0.8 to +1.5 points, against a 1.02-point
+round turn and structures of 1-3 points. Both experiments decide a *claim*, not a
+strategy.
+
+---
+
+## Experiment 45 — OTE is not a zone: depth helps monotonically (July 2026)
+
+The first properly powered depth test — 22,916 to 33,444 samples per band on
+1-minute, comfortably past the 5,000 floor — and the first decided verdict since
+the sweep/run rule.
+
+### Method: first touch, after confirmation
+
+Every sample is taken at the bar a depth band is **first reached**, after the
+leg's confirmation bar. Binning by where a retracement *ended* would condition on
+the future, which is the look-ahead that inflated three earlier results here.
+One retracement can therefore contribute to several bands, and that is correct:
+when price touched 62% nobody knew whether it would halt or run to 85%.
+
+Legs require a displacement, per the source's own precondition that OTE is valid
+only after one. 2,789 legs of 12,668 were dropped at 5m for lacking it.
+`research/depth_claims.py` with 26 tests, boundaries pinned at exactly 61.8 and
+79.
+
+### The curve is monotone, not peaked
+
+Forward continuation in the leg direction, h=4:
+
+| band | 1m (n) | 1m edge | 5m edge |
+|---|---|---|---|
+| <38.2 | 26,810 | **−2.48 (z −8.2)** | −1.86 (z −2.8) |
+| 38.2-61.8 | 28,913 | +0.42 | +0.18 |
+| **61.8-79 (OTE)** | 25,797 | **+0.73** | **+0.29** |
+| 79-100 | 22,916 | **+1.68 (z +4.9)** | **+1.70 (z +2.3)** |
+| >100 "invalidated" | 31,694 | **+1.55 (z +5.2)** | +0.18 |
+
+**The OTE band is not a peak.** The deeper 79-100 band beats it on both
+timeframes, and on 1-minute the band ICT calls *invalidated* also beats it. The
+claim that "past 79% weakens the setup" is contradicted — past 79% is where the
+best numbers sit.
+
+The shape passes the three-part rule: n well above 5,000, |z| > 3 on the shallow
+and deep bands, and the same ordering on an independent timeframe.
+
+### What ICT gets right, and what it gets wrong
+
+**Right — do not chase shallow retracements.** The <38.2 band is significantly
+negative on both timeframes (−2.48 at z −8.2 on 1m). Entering after a shallow
+pullback is measurably worse than chance, which is exactly the advice given.
+
+**Wrong — there is no optimal zone.** Depth helps monotonically. The mechanism is
+mundane: a deeper retracement leaves more of the leg left to travel, so the
+"zone" is an artifact of a real but continuous relationship. That explains why
+practitioners believe in it — entries at 70% *do* beat entries at 30% — while the
+specific 61.8-79 band has no special property.
+
+This was the pre-registered alternative, written down before the run precisely so
+that finding it could not be reframed afterwards.
+
+### The usual caveat
+
+These are direction counts without costs. The magnitudes are +0.7 to +1.7 points,
+which is the same sub-spread territory as everything else in this log — the
+median ES structure at these timeframes is 1-3 points against a 1.02-point round
+turn. The verdict is about the *claim*, not about tradeability.
+
+---
+
+## Experiment 44 — The order-block family, and two look-ahead bugs caught by the +5 rule (July 2026)
+
+The order block, breaker and mitigation block, built to the four-condition
+specification for the first time. Every order block previously measured here used
+`smc.ob()`, which implements none of the four conditions — the liquidity grab,
+the engulfment, the FVG or the MSS.
+
+### The strict definition finds more, not fewer
+
+| timeframe | `smc.ob()` full-frame | four-condition |
+|---|---|---|
+| 15m | 72 | **226** |
+| 5m | 122 | **463** |
+| 1m | — | **1,143** |
+
+`smc.ob()` on a full frame keeps mainly *unmitigated* blocks and discards the
+rest, so being stricter per candidate while keeping everything that passes yields
+roughly three times as many.
+
+**The engulfment is the binding condition.** At 15m it rejects 46,382 candidates
+against 1,445 for the FVG and 825 for the MSS. Once a candle grabs the prior
+extreme *and* closes fully beyond it, conditions 3 and 4 almost always follow —
+they are largely consequences of the displacement rather than independent
+filters. The specification reads as four requirements and behaves as about two.
+
+### Two look-ahead bugs, both caught by the "+5 points is a bug" rule
+
+The first pass returned +8 to +18 points with a textbook hierarchy — breaker >
+order block > mitigation — replicated on both timeframes. It looked like the
+specification vindicating itself.
+
+**Bug one:** a block requires an FVG within 3 bars and an MSS within 10 bars
+*after* the block candle, but the retest scan started at `i+2`. Reactions
+occurring before the confirming shift were being counted, so the block was
+selected using information that did not exist at the moment of entry. Fixed by
+recording `confirmed_index` and requiring retests to follow it.
+
+**Bug two, found because the fix worked unevenly.** After fixing bug one the
+order block and mitigation effects collapsed while the breaker held at
++14.8/+15.1/+14.1. **One arm surviving a correction that should have touched all
+three meant the correction was not actually shared.** `violated_with_shift`
+returned the *violation* bar, but a breaker does not exist until the opposing MSS
+confirms up to 12 bars later, so the same gap was still being counted.
+
+| arm (1m) | first pass | bug one fixed | both fixed |
+|---|---|---|---|
+| order block 1st | +8.0 / +7.9 / +13.5 | +1.5 / +0.1 / +4.4 | +1.5 / +0.1 / +4.4 |
+| mitigation | +0.2 / +9.4 / +8.9 | +6.4 / +4.3 / +6.0 | +6.4 / +4.3 / +6.0 |
+| breaker | +17.7 / +7.3 / +12.0 | +14.8 / +15.1 / +14.1 | **+8.5 / −2.2 / +0.6** |
+
+### The verdicts
+
+| concept | n (5m / 1m) | 5m | 1m | verdict |
+|---|---|---|---|---|
+| order block, 1st retest | 231 / 640 | −1.3 / +10.8 / −5.7 | +1.5 / +0.1 / +4.4 | **unknown** |
+| mitigation, 2nd+ retest | 214 / 612 | −3.0 / +5.3 / +0.1 | +6.4 / +4.3 / +6.0 | **unknown** |
+| breaker, flipped | 75 / 136 | +18.2 / +0.0 / +9.7 | +8.5 / −2.2 / +0.6 | **unknown** |
+
+No arm holds a consistent sign across horizons *and* timeframes, and every sample
+is far below the 5,000 floor. Recorded as unknown exactly as registered before
+the numbers existed, with sample count as the headline rather than effect.
+
+The honest reading beyond "unknown": after removing both look-aheads there is **no
+evidence of an effect** in any of the three, and the stated hierarchy — breaker
+stronger than order block, blocks weakening with each retest — does not survive
+either. But the samples cannot rule one out.
+
+### The pattern across this programme
+
+This is the third look-ahead-shaped defect found here, after `smc.ob()`'s
+unmitigated-survivor artifact at 97% and the session-end holiday carry worth 93%
+of gross profit. **All three made results look better than reality, never worse.**
+That asymmetry is the reliable signal: a number that flatters the hypothesis
+deserves suspicion before a number that disappoints it.
+
+---
+
+## Experiment 43 — The full multi-timeframe sequence, and the geometry is fair (July 2026)
+
+The first faithful test of the methodology as specified: 15-minute context for
+bias, liquidity and the stop; 1-minute execution for the MSS and the entry.
+Experiment 42 ran every leg on one timeframe, which both starved the sample and
+removed the mechanism — entering and exiting on the same scale cannot produce the
+large R:R the methodology claims.
+
+### The structure did what it was built to do
+
+| | exp 42 arm C | exp 43 |
+|---|---|---|
+| fill rate | 1.9% | **7.1%** |
+| n | 178 | **665** |
+| median cost/R | — | **0.140** |
+
+Both registered predictions held: the finer execution leg completes the sequence
+far more often, and the coarse stop keeps cost/R low despite a fine-grained entry.
+`research/mtf_join.py` handles the two-frame join with 8 tests, the key one
+asserting an execution bar at the context bar's close is **excluded** — using it
+would react to a close with a bar that printed before that close existed.
+
+### The first attempt had a broken target, and the funnel showed it
+
+Median R:R came out at **0.27** — risking 7.27 points to make 2 — because
+`next_liquidity` took the *nearest* level while the stop sat beyond the coarse
+swept extreme. Target and stop were on different scales. That produced a 74.81%
+win rate needing 89.61%.
+
+The source never says nearest: it says the next **significant** draw, the 2022
+model says the opposite end of the swept range, Silver Bullet says typically 1:3.
+So a minimum-R:R floor was added to express "significant", and swept rather than
+chosen, since which level qualifies is a specification ambiguity.
+
+### The geometry is fair at every target distance
+
+| min R:R | median R:R | win rate | break-even needs | gap | mean net R | 95% |
+|---|---|---|---|---|---|---|
+| 0.0 | 0.26 | 75.04% | 90.64% | −15.6 | −0.115 | [−0.240, +0.032] |
+| 1.0 | 1.28 | 42.23% | 50.04% | −7.8 | −0.081 | [−0.262, +0.128] |
+| 1.5 | 1.79 | 33.40% | 40.91% | −7.5 | −0.038 | [−0.238, +0.187] |
+| 2.0 | 2.27 | 25.79% | 34.87% | −9.1 | −0.048 | [−0.253, +0.184] |
+| 3.0 | 3.31 | 18.67% | 26.43% | −7.8 | −0.028 | [−0.264, +0.226] |
+
+**Mean net R is negative at all five geometries.** Moving the target from 0.26R to
+3.31R takes the win rate from 75% to 19%, which is close to what fair barriers
+predict, and the shortfall against break-even stays pinned near 8 points
+throughout. Nothing about the target choice rescues it — the tradeoff is priced.
+
+The sharper reading: the win rate sits below even the **gross** break-even of
+`1/(1 + R:R)` at every geometry — 18.67 against 23.2 at the widest, 33.40 against
+35.8 in the middle. So this is not only a cost story. The entry performs at or
+slightly under what the barrier geometry alone implies.
+
+### It still cannot be powered, and that was the pre-registered stop
+
+n=664 at a 7.1% fill rate, against a floor of 5,000 — short by a factor of 7.5.
+Every interval spans zero.
+
+The decision to stop here was made **before** these numbers, precisely so it
+would not be made while looking at them. The alternative on the table was
+widening the MSS and retrace windows until the fill rate cooperated, and that was
+ruled out in advance: it stops being the sequence the source describes, and
+tuning a window until n suffices is a selection process on the same data — the
+mechanism behind both retractions in this log.
+
+What can honestly be said: across five independent target geometries the point
+estimate is negative every time and the win rate never reaches break-even, which
+is evidence against the sequence being profitable as specified; and the sample is
+too small for any of it to be significant on its own.
+
+**ICT's full setup cannot be validated or refuted on five years of ES at a
+timeframe where costs permit trading.** Powering it needs roughly 7.5 times the
+data — about 35 years of 15-minute history — or an instrument where the sequence
+fires far more often.
+
+---
+
+## Experiment 42 — The prescribed entry points the right way and cannot be powered (July 2026)
+
+Experiment 41 left one lever untested. Everything measured so far entered at the
+probe bar, which the source explicitly calls not a trade; the prescribed entry
+waits for a lower-timeframe MSS and enters on the retest of the PD array created
+by the displacement leg. That is a **path intervention** — it moves entry price
+relative to a fixed invalidation level, changing R:R directly rather than
+changing direction accuracy.
+
+Three arms, identical stop anchored on the probe candle, so they differ only in
+entry. 15-minute, training span, cell = bias agrees.
+
+### MSS built to the specification
+
+`research/ict_mss.py`, with 14 tests. A swing broken by a **body close** past the
+extreme — "a wick poke is not an MSS" — where the breaking candle is a
+displacement. `smc_adapter.detect_bos_choch` requires neither, so everything
+previously measured through it was CHoCH at best.
+
+### The results
+
+| arm | disp 2.0 | disp 1.5 | disp 1.0 | disp 0.75 | fill rate |
+|---|---|---|---|---|---|
+| **A** probe bar | −0.127 | −0.127 | −0.127 | −0.127 | 100% |
+| **B** MSS close | −0.228 | −0.004 | −0.029 | −0.063 | 2.4-14.6% |
+| **C** PD array retest | — | — | **+0.277** | **+0.096** | **1.9-2.4%** |
+
+Arm A reproduces experiment 41 to four decimals (−0.1268), which is the control
+confirming the new harness measures the same population before the entry rule
+changes.
+
+**The ordering moves as predicted.** A → B → C runs −0.127 → about zero →
+positive, at every threshold where C is measurable. That is the registered
+mechanism: confirmation helps somewhat, the retest price helps more, because
+entering nearer a fixed stop raises R:R.
+
+### And it cannot be confirmed
+
+Arm C is **n=178 at a 1.9% fill rate**, and every interval spans zero — the best
+cell is [−0.078, +0.565]. Against the pre-registered rule of `|z| > 3`,
+`n >= 5000` and independent-timeframe replication, it misses the sample floor by
+a factor of 28.
+
+**This is recorded as unknown, not as a weak positive.** It has the exact shape of
+the two results already retracted here: the cap-6 cell at +2.24 that became −8.87
+out of sample, and the exceptional FVG tier at +3.22 that became −0.08 under
+power. Both were attractive small-n cells with wide intervals, and both were
+reported before replication.
+
+The displacement threshold was swept rather than chosen, because the source's
+"ideally creates a fair value gap" makes it a specification ambiguity rather than
+a parameter. All four settings are above. Arm C is positive at both thresholds
+where it has enough samples to report, which is mildly reassuring and nowhere
+near sufficient.
+
+### The structural finding
+
+**ICT's full prescribed sequence is too rare to validate on available data.**
+
+It requires a sweep, then an MSS within twelve bars in the right direction, then a
+retrace into the displacement leg's FVG. That chain completes on **1.9% of
+qualifying setups**. Three and a half years of 15-minute ES yields 178 samples
+where 5,000 are needed.
+
+Powering it would take roughly a hundred years at this timeframe, or a move to
+1-minute data where cost drag is 0.515R and already sank arm A there. So the
+sequence sits in a gap: **frequent enough to trade, too rare to prove**, on the
+only timeframe where costs permit trading at all.
+
+That is a different kind of negative from the rest of this log. The earlier
+results were measured and refuted. This one is unfalsifiable with the data
+available, and saying so is the honest end of it.
+
+---
+
+## Experiment 41 — The sweep/run edge is an endpoint edge, and does not survive barriers (July 2026)
+
+Experiment 40's sweep/run result is the only finding here to pass `|z| > 3`,
+`n >= 5000` and independent-timeframe replication. This applies geometry and
+costs to it. Stops follow the source — beyond the candle extreme that invalidates
+the trade, buffered in ATR so they scale — with targets at multiples of that risk.
+
+### Every cell loses, and cost is no longer the reason
+
+| cell | n | median risk | cost/R | mean net R | 95% interval | implied gross |
+|---|---|---|---|---|---|---|
+| 15m all forms | 9,296 | 8.01 pt | 0.127 | **−0.095** | [−0.194, +0.004] | **+0.03** |
+| 15m sweep form | 1,083 | 6.50 pt | 0.157 | −0.159 | [−0.292, −0.027] | −0.002 |
+| 5m sweep form | 3,103 | 3.87 pt | 0.264 | −0.307 | [−0.355, −0.259] | −0.043 |
+| 1m sweep form | 10,108 | 1.98 pt | 0.515 | −0.684 | [−0.731, −0.640] | −0.169 |
+
+Widening the stop did what it was supposed to: **cost drag fell from 0.515R at
+one minute to 0.127R at fifteen**, the lowest this programme has reached. It did
+not help, because gross expectancy is only about **+0.03R**.
+
+### An endpoint edge is not a path edge
+
+This is the lesson, and it is the second time it has appeared.
+
+The direction test asks: *is the close higher h bars later?* That is an
+**endpoint**. A trade asks: *does price reach +2R before −1R?* That is a **path**.
+A 55% chance of being up in fifteen minutes says very little about winning a race
+between two barriers, because the barrier outcome depends on the order in which
+levels are touched, not on where the series ends.
+
+So a +2.63 to +5.57 point directional edge — real, replicated, significant at
+z 10.24 — converts to roughly +0.03R gross. Experiment 35 found the same for the
+older sweep reading. **Directional accuracy at a fixed horizon should not be
+reported as evidence a strategy is close to viable**, and earlier entries in this
+log that estimated tradeability from win-rate edge alone (the "1:2 against costs"
+figure) were doing exactly that. The correct estimate is the barrier measurement,
+and it is 1:4 gross, not 1:2.
+
+### What survives
+
+The finding itself stands: the sweep/run rule is a real, replicated property of
+ES price. ICT's claim that higher-timeframe bias selects between reversal and
+continuation is **correct**, and it is the only ICT claim this programme has
+confirmed at full power.
+
+What does not follow is that it can be traded with these entries and exits. The
+15m all-forms interval reaches +0.004 at its top, so break-even is at the extreme
+edge of plausibility, and the point estimate is negative in all twelve geometries
+tested at every timeframe.
+
+Next: the entry actually prescribed. All of the above enters at the probe bar,
+which the source explicitly calls not a trade — the prescribed entry waits for a
+lower-timeframe MSS and enters on the PD array retest. Whether confirmation
+changes the *path* statistics, as opposed to the endpoint ones, is the open
+question and is the first thing this programme has had a mechanism-level reason
+to expect might differ.
+
+---
+
+## Experiment 40 — A tie-handling bug, and the sweep/run rule replicating on three timeframes (July 2026)
+
+Two corrections and the best-supported result this programme has produced.
+
+### The tie bug, which inflated experiments 34-37
+
+Every directional test wrote `(close[t+h] - close[t]) * sign > 0`. An exact zero
+close-to-close change is **6.2% of events at one 5-minute bar**, decaying to 1.2%
+by 24 bars, and that formulation silently assigns every tie to one side.
+
+| tie treatment | reversal rate, sweep-form, h=1 |
+|---|---|
+| ties counted as failures (as published) | 44.70% |
+| ties counted as wins | 50.93% |
+| **ties excluded (correct)** | **47.67%** |
+
+So experiment 34's headline of −5.28 at z −11.68 is really **−2.33 at z −5.22**,
+inflated about twofold. Worse, the "decay with horizon" that made the result look
+like a real microstructure effect partly tracked the **tie rate** decaying from
+6.2% to 1.2%, not the signal.
+
+It also touches experiment 37, where "continuation runs 47-49%, below a coin flip
+at every horizon" becomes roughly 50.6% with ties excluded — *at* the coin flip.
+The paired difference against the control survives, because both sides carried the
+same bias, but that absolute claim was an artifact.
+
+Ties are now excluded rather than assigned.
+
+### The sweep/run rule, which was never applied
+
+ICT separates a liquidity **sweep** (wick through, close back inside, reversal)
+from a **run** (close beyond, sustained displacement, continuation), and the rule
+choosing between them is not mechanical:
+
+> "If the higher-timeframe direction agrees with the side that just got swept,
+> expect a run; if it disagrees, expect a sweep."
+
+Experiments 34 and 35 applied no bias condition and predicted reversal for every
+event. That is a mixture, and the −2.33 above is what a mixture produces.
+
+Splitting on bias agreement, with edge measured against **what ICT predicts for
+that cell**, so positive means the methodology is right (5-minute):
+
+| cell | n | h1 | h2 | h4 | h12 | h24 |
+|---|---|---|---|---|---|---|
+| bias agrees → expect continuation | 28,004 | +0.99 (z 3.24) | +1.53 (z 3.94) | +1.85 (z 3.69) | +2.48 (z 3.10) | +3.57 (z 3.27) |
+| bias disagrees → expect reversal | 22,880 | +0.72 | +1.05 | +1.43 | +1.92 | +2.41 |
+| **neutral bias** | 55,330 | +0.13 | +0.32 | +0.21 | +0.51 | +0.47 |
+
+**The neutral cell is flat at every horizon (z < 1.2).** That is an internal
+control nobody designed as one: where the methodology makes no prediction, there
+is no effect. A spurious pattern would not respect that boundary.
+
+### The specific cell, replicated on three timeframes
+
+Sweep form — wick through, closed back inside — **with bias agreeing**, so a
+failed break in the direction of the prevailing structure:
+
+| timeframe | n | h1 | h4 | h24 |
+|---|---|---|---|---|
+| **1m** | **10,108** | **+5.57 (z 10.24)** | **+4.92 (z 8.31)** | **+3.72 (z 4.70)** |
+| 5m | 3,103 | +3.75 (z 3.99) | +3.45 (z 2.97) | +2.33 |
+| 15m | 1,083 | +5.00 (z 3.12) | +3.31 | +2.47 |
+
+Same sign, comparable magnitude, significant at every horizon on 1-minute where
+n clears 5,000. z 10.24 survives a Bonferroni correction over all 30 cells
+examined, which needs about 3.4.
+
+It also passes the three-part rule adopted after two retractions: `|z| > 3`,
+`n >= 5000`, **and replication on an independent timeframe**. It is the first
+result in this programme to do so.
+
+The run-form cell is *weaker* than the sweep-form cell (−0.04 to +1.40 on 1m), so
+the effect is specific rather than smeared across all liquidity events.
+
+### Still probably not tradeable, and by how much
+
+A +5.57-point edge is 55.6% directional accuracy. At the two-hour horizon on 5m
+the edge is +3.57 against an expected absolute move around 7 points, so roughly
+**0.5 points of expectancy against 1.02 points of round-turn cost.**
+
+That is a ratio of about **1:2**, against 1:7 for the old sweep reading and 1:13
+for the FVG magnet. The closest anything has come, and still under water. The next
+test is whether barrier geometry closes a two-fold gap — it has not closed a
+seven-fold one before.
+
+---
+
+## Experiment 39 — The exceptional-tier reaction does not replicate (July 2026)
+
+Experiment 38 reported the tier reaction ordering as −3.07, −0.35, +3.22 and
+called it the first ICT claim to be confirmed rather than refuted, while flagging
+that the top tier was n=1,197 at z +1.55 and needed power. **The power test says
+no.**
+
+Same measurement on 1-minute bars over the same span, 214,792 gaps against
+43,536, giving the exceptional tier 5,985 detections instead of 1,402:
+
+| tier | n (reaction) | h=1 | h=4 | h=12 |
+|---|---|---|---|---|
+| weak | 25,722 | **−1.81** (z −3.89) | **−1.77** (z −3.91) | −1.01 |
+| quietly strong | 165,648 | −0.22 | **−0.93** (z −4.87) | **−0.67** (z −3.65) |
+| **exceptional** | **5,241** | **−0.08** | −0.31 | −1.05 |
+
+**+3.22 became −0.08 with 4.4 times the samples.** It was a small-sample
+artifact. The retraction is the result: experiment 38's headline does not stand,
+and no tier shows a positive reaction at adequate power.
+
+### What does replicate
+
+**Weak FVGs are traps, and now significantly so.** −1.81 at one bar and −1.77 at
+four, both z about −3.9 on n=25,722. The source's advice to discard them is
+correct. It is advice about what to avoid, not something to trade.
+
+**The magnet strengthens with tier**, on both timeframes:
+
+| tier | magnet 5m | magnet 1m |
+|---|---|---|
+| weak | +4.36 | +3.93 (z 13.17) |
+| quietly strong | +4.16 | +6.00 (z 26.76) |
+| exceptional | +5.35 | **+6.37** (z 9.08) |
+
+A stronger imbalance pulls harder, and exceptional is strongest at both
+resolutions. That is a genuine, replicated, correctly-ordered effect — and it is
+still a claim about where price goes, not about expectancy.
+
+### The lesson, again
+
+Experiment 32 selected the best of a three-cell cap curve and it reversed out of
+sample. Experiment 38 read two positive cells out of nine at n=1,197 and they
+reversed under power. Both were flagged as underpowered when published and both
+went the way the flag suggested.
+
+The rule that keeps being re-learned: **an underpowered positive is not a weak
+positive, it is an unknown.** Report it as unknown.
+
+---
+
+## Experiment 38 — FVG strength tiers (superseded by experiment 39) (July 2026)
+
+> **The headline of this entry was retracted.** The exceptional-tier reaction of
+> +3.22 did not replicate at higher power — see experiment 39, where it is −0.08
+> on 4.4x the samples. The tier *magnet* ordering below does replicate.
+
+Experiments 36 and 37 pooled all 43,536 gaps. The source separates them into
+three mechanical tiers and says weak ones are traps to discard while exceptional
+ones react "almost always violently and immediately", so pooling averages the
+category to throw away with the category to trade.
+
+`research/fvg_quality.py` classifies from the three candles plus the one before
+them. Indexing verified empirically rather than assumed: `candle_index` points at
+the **third** candle, since the patched detector emits after candle 3 closes, so
+the displacement candle is `idx - 1` and the reference candle is `idx - 3`.
+
+### Geometry alone is not enough to define "exceptional"
+
+A first pass used only candle geometry — candle 2 breaks the prior candle's
+range, candle 3 extends beyond candle 2. That labels **72.1%** of gaps
+exceptional, which cannot describe institutional commitment. Making a new extreme
+is a low bar on a trending 5-minute chart.
+
+The source also requires a substantial body and minimal wicks on the middle
+candle, so "exceptional" now additionally requires that candle to *be* a detected
+displacement (body > 2x ATR). That moves the split to weak 9.2%,
+quietly strong 87.5%, **exceptional 3.2%** — 1,402 gaps, and a plausible rarity.
+
+### The tiers order exactly as claimed
+
+| tier | n | magnet (fill vs control) | reaction h=1 | h=4 | h=12 |
+|---|---|---|---|---|---|
+| weak | 4,018 | +4.36 (z 5.69) | **−3.07** | −0.83 | +0.65 |
+| quietly strong | 38,107 | +4.16 (z 13.37) | −0.35 | −0.60 | −0.89 |
+| **exceptional** | 1,401 | **+5.35** (z 3.63) | **+3.22** | +0.31 | **+3.18** |
+
+**The h=1 reaction is monotone in the predicted direction: −3.07, −0.35, +3.22.**
+Weak gaps are blown through, exceptional gaps react. That is what the source
+claims, and it is the first time in this programme that an ICT claim has been
+confirmed rather than refuted.
+
+The magnet holds in every tier and is strongest for exceptional (+5.35), which is
+also consistent — a stronger imbalance pulls harder.
+
+### What this does not yet establish
+
+Exceptional is n=1,197 for the reaction test at z +1.55 and +1.53. **Suggestive,
+not significant**, against a threshold of 3. Two positive cells out of nine
+examined, so they are also the best of nine.
+
+The stronger evidence is the *ordering* rather than any single cell, because it
+was predicted in advance by the source and appears across three independent
+populations. But an ordering with an underpowered top tier is a reason to get
+more samples, not to conclude.
+
+Note also what did not change: the pooled results from experiments 36 and 37 both
+survive the split. The magnet is real in all tiers, and the reaction is negative
+in the two tiers holding 96.7% of gaps. The tier taxonomy does not overturn
+those; it isolates a small subset that behaves differently.
+
+---
+
+## Experiment 37 — The FVG is a magnet, not a springboard (July 2026)
+
+The FVG claim has two parts: price retraces into the gap, **and then continues in
+the gap's direction**. Part one was confirmed in experiment 36. Part two is the
+tradeable half and had never been tested, because every earlier measurement
+started at the gap's *formation* rather than at the *return*, which is the actual
+trigger.
+
+Measured on 5-minute ES over the training span. 43,536 gaps, of which **40,413
+were returned to**, each compared against a geometry-matched control zone that
+price also returned to — otherwise the comparison measures "does price come
+back" rather than "does this zone work".
+
+| horizon | continuation after return | matched control | difference | z |
+|---|---|---|---|---|
+| 1 | 47.46% | 47.97% | −0.50 | −1.31 |
+| 2 | 47.98% | 48.56% | −0.58 | −1.54 |
+| 4 | 48.40% | 49.23% | −0.84 | −2.28 |
+| 6 | 48.66% | 48.97% | −0.31 | −0.85 |
+| 12 | 48.71% | 49.83% | **−1.12** | **−2.99** |
+| 24 | 49.22% | 49.92% | −0.70 | −1.92 |
+
+**Every difference is negative.** The absolute level was originally reported as
+"47-49%, below a coin flip at every horizon" — that part was a tie artifact and is
+withdrawn. Exact-zero close-to-close moves were counted as non-continuation; with
+ties excluded the rate is about 50.6%, at the coin flip. **The paired difference
+against the control survives**, because both sides carried the same bias, so the
+finding below stands and only the absolute claim was wrong. See experiment 40.
+
+So the two halves of the FVG claim separate cleanly:
+
+| claim | result |
+|---|---|
+| price returns to the gap to rebalance | **holds**, +4.30 points over control, z +15.05 |
+| price then continues in the gap's direction | **fails**, −0.5 to −1.1 against control, never above 50% |
+
+**The FVG is a magnet, not a springboard.** Price does come back to the
+imbalance — that part of the methodology describes something real. It simply
+does not bounce from it. It arrives and keeps going.
+
+That is the more useful negative result, because it is specific. An entry model
+built on "wait for the retracement into the FVG, then trade the continuation" is
+trading the wrong half of a real phenomenon: the reliable half gets your limit
+order filled, and the unreliable half is supposed to pay for it.
+
+### Consequent encroachment, weakly positive and not yet trusted
+
+Splitting the returns by depth: those reaching the 50% midpoint continue
++1.62, +1.20, +0.02, +0.71, +1.25 and +0.95 points more often than those touching
+only the near edge.
+
+Consistently positive but small, with no interval computed, and plausibly an
+artifact — a return that reaches the midpoint has by construction travelled
+further, so the split conditions on movement rather than on the level. It needs a
+test with depth as the only variable before it counts as anything.
+
+---
+
+## Experiment 36 — Both real signals are sub-spread, and the reason is scale (July 2026)
+
+The magnet claim strengthens at a shorter window, which is the right shape: with
+a long enough lookahead everything fills and the control catches up.
+
+| lookahead | real fill | control | paired difference | z |
+|---|---|---|---|---|
+| 48 bars | 89.99% | 85.69% | **+4.30** [+3.73, +4.86] | **+15.05** |
+| 96 bars | 92.88% | 90.35% | +2.53 [+2.06, +3.01] | +10.32 |
+
+So the FVG magnet is real and monotone. Then the question that decides it.
+
+### The median gap is narrower than the cost of trading it
+
+Measured over 43,536 FVGs on 5-minute ES across the training span:
+
+| | points |
+|---|---|
+| median gap width | **0.75** |
+| median distance from price to gap midpoint | 1.88 |
+| **round-turn cost** | **1.02** |
+
+**59.8% of gaps are narrower than one round turn.** 26.2% have their midpoint
+closer to price than the cost itself, and 52.4% are within two round turns.
+
+The marginal edge from the magnet is 4.3 percentage points of fill probability
+over a matched control, applied to a median 1.88-point target: about 0.08 points
+of expectancy against 1.02 points of cost.
+
+### Both confirmed signals fail the same way
+
+| signal | significance | expectancy | cost | ratio |
+|---|---|---|---|---|
+| sweep continuation | z −11.68, n=12,413 | ~0.15 pt | 1.02 pt | 1 : 7 |
+| FVG magnet | z +15.05, n=43,536 | ~0.08 pt | 1.02 pt | 1 : 13 |
+
+### This is a statement about scale, not about ICT
+
+Five-minute ES structures have a characteristic size of roughly one to three
+points — a median gap of 0.75, a median target distance of 1.88. A retail round
+turn is 1.02 points. **Any signal defined on that geometry is sub-spread by
+construction**, whatever its name and however significant it is.
+
+That reframes every earlier result in this log. Seventy-three configurations
+failed not because ICT primitives are meaningless — two of them are real at
+z > 10 — but because the effects they describe live below the transaction floor.
+The search was never going to find a configuration that fixed that, because no
+arrangement of sub-spread signals produces a super-spread strategy.
+
+It also predicts, rather than assumes, that the remaining primitives will fail:
+CE reaction levels, OTE depths, order block and breaker retests are all defined
+on the same five-minute geometry and therefore inherit the same ratio.
+
+---
+
+## Experiment 35 — The sweep signal is real, and smaller than the spread (July 2026)
+
+Experiment 34 found a genuine directional signal: after a sweep, price continues
+rather than reverses, 55.3% at five minutes, z -11.68. This applies geometry and
+costs to 12,413 sweeps over the training span, entering in the continuation
+direction, resolved on 1-minute data through the same first-touch logic and
+16:00 cutoff as every other measurement here.
+
+### Every geometry loses
+
+| stop | cost/R | best mean net R | 95% interval | implied gross edge |
+|---|---|---|---|---|
+| 3 | 34.0% | −0.3404 | [−0.3538, −0.3269] | ~0.000 |
+| 5 | 20.4% | −0.1870 | [−0.2022, −0.1726] | +0.017 |
+| 8 | 12.8% | −0.1080 | [−0.1241, −0.0911] | +0.020 |
+| 12 | 8.5% | −0.0812 | [−0.0976, −0.0640] | +0.004 |
+
+All sixteen cells negative, every interval excluding zero, best −0.0812R at a
+12-point stop. Mean net R improves monotonically as the stop widens, exactly
+tracking `1.02 / stop`, which is the signature of a result driven by cost drag
+rather than by anything in the signal.
+
+### The reason is magnitude, not direction
+
+Subtracting the known cost drag leaves a gross edge of **+0.00 to +0.02R**. The
+direction edge is real but almost absent once expressed in R.
+
+Over five minutes ES moves on the order of ±1.5 points. A 55/45 split on that is
+about 0.15 points of expectancy. One round turn costs **1.02 points**. The signal
+is smaller than the spread by roughly seven times.
+
+That is the cleanest statement this program has produced. **A genuine market
+inefficiency exists, is overwhelmingly significant at z −11.68 on n=12,413, and
+is too small to transact on.** Nothing about strategy construction changes it:
+the edge decays to nothing by two hours, so it cannot be held for long enough to
+outgrow the spread, and it is too small at five minutes to pay for crossing it.
+
+### What this closes
+
+The primitive programme has now answered its own question. Of the primitives
+carrying directional claims, the sweep is the strongest and it is
+non-transactable. The FVG magnet claim holds (+2.53 points, z +10.32) but is a
+statement about where price goes, not about expectancy — a limit entry at the
+gap gets filled, which is not the same as winning.
+
+---
+
+## Experiment 34 — Two real findings: the FVG magnet holds, and sweeps predict the opposite of what ICT says (July 2026)
+
+The first properly-controlled positive results in this program, on 5-minute ES
+over 2021-07-25 to 2024-12-31. One sample per detection rather than per trade,
+so n runs to tens of thousands and the instrument is finally sharper than the
+effect. Day-block bootstrap intervals throughout.
+
+### The FVG magnet claim holds
+
+ICT says price returns to an imbalance to rebalance. Tested against a control of
+identical width and identical signed offset from price, anchored at a random
+other bar, so geometry is held constant and only the imbalance is tested.
+
+| | fill rate within 96 bars |
+|---|---|
+| real FVGs | **92.88%** |
+| matched control | 90.35% |
+| **paired difference** | **+2.53 points, CI [+2.06, +3.01], z +10.32** |
+
+n=43,519 over 1,069 days, median time to fill 1 bar. The paired statistic is the
+right one — real and control are matched per gap, so comparing two separate
+intervals is cruder.
+
+At 15m the same test gives +0.54 with overlapping intervals on n=15,584, so the
+effect is resolution-dependent and only clear at fine granularity.
+
+**This does not make the FVG tradeable.** A 93% fill rate against a 90% control
+is a statement about where price goes, not about making money net of costs, and
+"price returns to the gap" is exactly what a limit entry at the gap needs — it
+says the entry gets filled, not that it wins.
+
+### Liquidity sweeps predict continuation, not reversal
+
+The reference calls the sweep "the single most important pre-condition for an
+ICT entry" and expects reversal after it. Measured over 12,413 sweeps:
+
+| horizon | reversal rate | edge | z | half 1 / half 2 |
+|---|---|---|---|---|
+| 1 bar (5 min) | 44.72% | **−5.28** | **−11.68** | −4.19 / −6.37 |
+| 2 | 46.10% | −3.90 | −7.72 | −2.95 / −4.86 |
+| 3 | 46.46% | −3.54 | −6.92 | −2.66 / −4.42 |
+| 4 | 47.07% | −2.93 | −5.64 | −2.14 / −3.71 |
+| 6 (30 min) | 46.95% | −3.05 | −5.27 | −2.21 / −3.89 |
+| 12 | 48.76% | −1.24 | −2.00 | −0.64 / −1.84 |
+| 24 | 49.84% | −0.16 | −0.24 | −0.26 / −0.06 |
+| 48 | 50.40% | +0.40 | +0.60 | +0.20 / +0.60 |
+
+**The sign is the finding.** A reversal rate of 44.72% means continuation happens
+55.28% of the time. After price wicks above a prior high and closes back below
+it — a failed breakout, ICT's canonical sell trigger — price goes **up** 55% of
+the time over the next five minutes.
+
+Four things make this hard to dismiss: z −11.68 at the shortest horizon, monotone
+decay to nothing by 24 bars, both time halves agreeing in sign and rough
+magnitude at every horizon, and a balanced 47.5% bullish split so it is not the
+index drift.
+
+It also explains why 15m saw nothing: its shortest tested horizon is 60 minutes,
+already past the decay.
+
+### What is not yet established
+
+**That any of this is tradeable.** These are close-to-close direction counts with
+no barriers, no costs and no position sizing. A rough check says the edge is
+probably too small: +5.28 points at a five-minute horizon over a typical ~3-point
+range is about +0.3 points of expectancy gross, against 1.02 points of round-turn
+cost. At 30 minutes it is roughly +0.5 against the same 1.02.
+
+So the honest statement is that **a real directional signal exists and points the
+opposite way to the methodology built on it**, and that the same cost wall which
+closed every earlier experiment still stands in front of it. The next test is
+whether any geometry converts a 55/45 five-minute edge into positive expectancy
+after costs.
+
+### Method note
+
+The paired difference matters. An earlier version compared two separate
+confidence intervals and an even earlier one used a control mirrored to the
+opposite side of price, which confounded the test with trend and showed FVGs
+filling *less* than control. Holding the side constant and shuffling only the
+time changed −0.91 to −0.18 on the smoke sample, and the paired statistic at
+full scale gives +2.53.
+
+---
+
+## Correction — the primitive test asked a question ICT does not make (July 2026)
+
+The commit that added `research/primitive_information.py` recorded "the FVG
+carries no directional information" from n=4418. **The measurement is sound and
+the conclusion is aimed at the wrong claim.**
+
+An FVG is not a directional signal and ICT does not say it is. Both the repo's
+own reference and the wider literature are explicit: an FVG marks an imbalance
+that *price tends to return to in order to rebalance*, and the Consequent
+Encroachment at its 50% midpoint is a **reaction level**. It is a location, not
+a reason to trade. `docs/ICT_Trading_Strategies_Combined_Research.md` places the
+FVG at step 4 of the Universal Setup Structure — the **entry model** — after
+bias, after the liquidity objective, and after the trigger.
+
+So "does price rise after a bullish FVG forms" was never an ICT claim, and
+measuring it flat neither supports nor refutes the methodology.
+
+The directional claims live elsewhere, and the same reference is blunt about
+which: of the liquidity sweep it says **"this is the single most important
+pre-condition for an ICT entry. Without a sweep, the setup is incomplete."**
+
+Restated test programme, by claim type:
+
+| primitive | what ICT actually claims | correct test |
+|---|---|---|
+| Liquidity sweep | reversal after a stop hunt | reversal rate against chance |
+| MSS / CHoCH | trigger confirming a new direction | continuation after a sweep |
+| sweep → MSS → entry | the setup is the *sequence* | does ordering beat its parts |
+| FVG | magnet; price returns to rebalance | fill rate against matched random zones |
+| FVG CE | reaction level at the 50% midpoint | reversal rate at CE against a random level |
+| OB, Breaker, IFVG | location to enter from | reaction rate on retest |
+| OTE | better entry depth | 61.8-79% against other retracement depths |
+
+The one result that stands from that commit is the **order block finding**: a
+full-frame pass finds 36 OBs in a year where windowed passes find 243, and the
+survivors are mainly unmitigated ones — an order block price never traded back
+into, which is selection on the future. That invalidated a 97% win rate and the
+mechanism is real regardless of which claim is being tested.
+
+---
+
+## Experiment 32 — The concurrency cap is not a lever, and 2025 is significantly negative (July 2026)
+
+Five cells, ~100 min. `MAX_CONCURRENT_POSITIONS = 3` had never been varied — zero
+occurrences in `logs/experiments.jsonl` — and was bound at import time in
+`trading/risk.py`, the third constant found in that state. Now sweepable.
+
+### The power argument that motivated this was wrong
+
+The rejection funnel showed "Max concurrent positions reached" 912 times against
+807 trades taken, which suggested raising the cap would roughly double the book
+and drop the statistical hurdle below the economic bar for the first time.
+
+**It does not. The funnel counts bar-level rejections, not distinct
+opportunities** — the same signal is re-rejected on every bar while the slots
+stay full. Raising the cap from 3 to 25 added about 130 trades, not 900, and the
+statistical hurdle never fell below the economic bar at any cap.
+
+That misreading is recorded because the funnel is the natural place to look for
+"what is blocking trades", and it will mislead the same way again.
+
+### On the training span the edge moved, and it was noise
+
+| cap | trades | barrier n | WR | edge | z | econ bar | stat hurdle | gross | net |
+|---|---|---|---|---|---|---|---|---|---|
+| 3 (baseline) | 807 | 729 | 33.33 | −0.22 | −0.13 | 4.24 | 5.24 | +$5,030 | −$52,113 |
+| **6** | 938 | 847 | 36.01 | **+2.24** | 1.36 | 4.35 | 4.95 | +$12,372 | −$51,640 |
+| 12 | 897 | 793 | 34.30 | +2.09 | 1.24 | 4.14 | 5.06 | −$3,974 | −$64,397 |
+| 25 | 935 | 821 | 34.10 | +1.47 | 0.89 | 4.02 | 4.96 | −$4,794 | −$66,755 |
+
+Cap 6 was the best cell ever measured in this program: gross +$12,372 and an
+edge of +2.24. It was still not a result — z 1.36 against a threshold of 3, and
++2.24 against an economic bar of +4.35. The edge also declined monotonically
+with the cap, which fits noise around zero better than a real optimum at 6.
+
+`P(edge > 0) = 100%` appears again at every cap and again means nothing: it is
+spread across null seeds, about 0.6 points, while sampling error is 1.65.
+Experiment 30 documented this trap and it recurred immediately.
+
+### The pre-registered validation kills it
+
+Rather than sweeping caps 4, 5, 7 and 8 to sharpen a peak — which would be
+selecting harder on a span already seen 72 times — cap 6 was taken to **2025**,
+out of sample, with cap 3 run alongside as a control. Registered before looking:
+cap 6 must beat cap 3 in the same direction by roughly +2 points.
+
+| 2025 cell | trades | barrier n | WR | edge | **z** | gross | net |
+|---|---|---|---|---|---|---|---|
+| cap 3 | 195 | 180 | 23.89 | **−9.29** | −2.92 | −$33,222 | −$45,214 |
+| cap 6 | 234 | 213 | 22.54 | **−8.87** | **−3.10** | −$35,862 | −$49,751 |
+
+Both land near −9 and cap 6 is worse in dollars. The training-span +2.24 does not
+reproduce. **The cap is not a lever**, and selecting the best of a three-cell
+curve produced exactly the kind of number this harness exists to catch.
+
+### The second significant result in the program, and it is negative again
+
+Cap 6 on 2025 reaches **z −3.10**, clearing the |z| > 3 threshold. The only other
+result ever to clear it was experiment 29's −5.07 for dropping the OTE gate.
+
+**Every statistically significant number this program has produced is negative.**
+Two observations at |z| > 3, both worse than random, against 72 configurations
+that otherwise cannot be distinguished from a coin flip.
+
+Do not over-read it. 2025 is one year, it has been seen diagnostically before,
+and a −9 point edge on 180 to 213 barrier trades could still be regime rather
+than mechanism — 2025 differs sharply from the 2021-24 training span, where the
+same configuration measured −0.22. But it is the second time the strategy has
+been caught doing something worse than nothing, and the first time on data it
+was not fitted to.
+
+### What is now established
+
+1. **The concurrency cap is not a lever.** A +2.24 training-span edge reversed to
+   −8.87 out of sample.
+2. **The rejection funnel counts bar-level rejections**, so it overstates how
+   many trades a loosened gate would add.
+3. **72 configurations.** The 2026 holdout remains unopened.
+
+---
+
+## Experiment 31 — The exit is not the problem either (July 2026)
+
+One cell, 20.4 min. `TRADE_MANAGEMENT_ENABLED` had been `False` for all 68
+configurations and appeared **zero times** in `logs/experiments.jsonl`. It was
+also bound at import time in `trading/positions.py`, so it was never sweepable —
+the exact trap the harness notes warn about. Now routed through `params.get()`.
+
+### Why it needed a different test statistic
+
+Partial closes and trailing stops change the payoff functional, so the barrier
+win rate, `_geometry` and every paired random-direction null in this repo stop
+applying: there is no single stop/target pair left to score. The question is
+instead whether a managed exit beats an unmanaged one **on the same entry**, so
+the statistic is the per-trade paired delta in net R with a bootstrap interval.
+Registered before the run: `mean(d) > +0.03R` with the interval clear of zero is
+a real result; 0 to +0.01R is noise.
+
+### It is neutral
+
+| | unmanaged | managed |
+|---|---|---|
+| trades | 807 | 922 |
+| gross | +$5,030 | +$14,693 |
+| costs | $57,144 | $67,804 |
+| net | −$52,113 | −$53,599 |
+| mean R per trade | −0.1044 | −0.0894 |
+
+Paired on 764 entries with identical bar and direction:
+
+| statistic | value |
+|---|---|
+| mean delta | **+0.0114 R** |
+| 95% bootstrap | **[−0.0419, +0.0632]** |
+| median delta | 0.0000 R |
+| paired t | +0.42 |
+| improved / worsened / unchanged | 14.9% / 11.4% / **73.7%** |
+
+**Three-quarters of trades are untouched**, because management only engages on
+the minority that reach 1R — which is what experiment 21 already implied with a
+median MFE of 0.70R against a 1.59R target and only 24.5% of trades ever
+reaching target. A 1R partial harvests a minority event and clips the trades
+that were the only source of positive payoff.
+
+The framing that closes the question: mean R is **−0.1044**, so break-even needs
+about **+0.10R**. Trade management supplies **+0.011R ± 0.05**, roughly a tenth
+of the gap, with an interval that contains zero.
+
+### Two predictions were wrong, and one cost model was
+
+Both this author and Codex pre-registered that management would make results
+*worse*. It came out marginally positive per trade. Both were wrong in sign and
+both were inside noise, which is the honest description.
+
+The reasoning that produced the wrong prediction is worth recording. The claim
+was that a partial close "adds a fill, so adds cost". It does not: total closed
+quantity is 100% either way, spread and slippage are charged on quantity filled,
+and commission is per contract rather than per ticket. There is no incremental
+market cost to splitting an exit in this model. Codex caught that before the run
+rather than after.
+
+Costs did rise, from $57,144 to $67,804, but through **more trades** (922 against
+807), not more expensive ones — cost per trade barely moved, $70.81 to $73.54.
+
+### Displacement, for the third time
+
+158 entries exist only in the managed run and 43 only in the unmanaged one,
+because a managed position releases its concurrency slot sooner. The
+three-position cap has now shaped three separate results: it crowded out FVG+OB
+overlaps in experiment 29, it bounds trade count at every timeframe in
+experiment 30, and it admits 158 extra trades here.
+
+**That makes the cap itself the next thing to test.** It has never been varied.
+
+### What is now established
+
+1. **The exit is not the problem.** Changing the exit rule moves expectancy by
+   +0.011R against a ~0.10R gap, with a bootstrap interval containing zero.
+2. **The "maybe the exit is the problem" objection is closed** without spending
+   the holdout or changing instrument.
+3. **69 configurations.**
+
+---
+
+## Experiment 30 — Costs fall with the timeframe and it changes nothing (July 2026)
+
+Two cells, 19 min. The `timeframes` sweep had never actually been run — no `tf:`
+labels exist in `logs/experiments.jsonl` — and it only covered 5min and 15min.
+30-minute and 1-hour entries had never been tested at all.
+
+### The question, framed as Codex insisted rather than as first proposed
+
+The obvious framing was a cost test: cost drag is `1.02 / stop_points`, the
+binding constraint at 11% of R, and a coarser timeframe gives structurally wider
+stops. Experiment 27 had already shown that widening the stop on the *same* 15m
+entries lowers the bar without creating edge, but that broke the relationship
+between the stop and the structure that produced the setup. A coarser timeframe
+does not.
+
+Codex rejected the framing anyway, and was right to. Costs are the economic
+reason the test could matter; they are not the statistical hypothesis. The only
+live claim is structural — **coarser bars may define a different signal
+population with different information content** — and lower costs are necessary
+but not sufficient. Two outcomes were registered:
+
+- **costs only** — edge stays near zero, net R becomes less negative because
+  cost/R falls, and the bar is still missed. Not a tradable result.
+- **scale creates edge** — edge rises materially above zero, not merely above
+  the lowered bar, and net turns positive.
+
+### It is the first one
+
+Resolver agreement first, because none of the rest means anything without it.
+The engine reads a fill from the entry candle's high and low while every null is
+resolved on 1-minute data, so the coarser the bar the more room for the two to
+disagree — the exact failure that cost experiment 27 a conclusion:
+
+| cell | agree | disagree |
+|---|---|---|
+| 15m | 807 | **0** |
+| 30m | 305 | **0** |
+| 1h | 89 | **0** |
+
+One ruler at every timeframe. Then the result:
+
+| cell | trades | barrier n | median stop | WR | **edge** | sampling se | **z** | econ bar | stat hurdle | gross |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 15m | 807 | 729 | 9.36 | 33.33 | −0.22 | 1.75 | **−0.13** | 4.24 | 5.24 | +$5,030 |
+| 30m | 305 | 262 | 12.92 | 32.06 | −2.07 | 2.88 | **−0.72** | 3.07 | 8.65 | −$5,052 |
+| 1h | 89 | 72 | 14.21 | 34.72 | **+3.73** | 5.61 | **+0.66** | 2.70 | 16.83 | −$4,712 |
+
+**The cost mechanism worked exactly as predicted and bought nothing.** Stops
+widened, cost share fell from 10.9% of R to 7.2%, and the break-even bar fell
+from +4.24 to +2.70. Gross went the other way, +$5,030 to −$4,712. A cheaper bar
+is worth nothing when there is no edge to protect.
+
+The lever is also weaker than it looks. ATR scales with roughly the square root
+of time, so a four-times coarser timeframe bought only 1.5 times the stop.
+
+### The 1h cell looks like a winner and is not
+
+Its +3.73 clears its own economic bar of +2.70, and 100% of the thirty seeds are
+positive. Neither fact means what it appears to.
+
+**`P(edge > 0) = 100%` is across seeds, and seeds measure the wrong thing.** The
+spread across seeds is null-estimation noise, about 0.6 points. The uncertainty
+that matters is sampling error on the strategy's own 72 barrier trades, which is
+**5.6 points**. The interval on +3.73 is roughly ±11, and z is +0.66.
+
+This is the trap the pre-registration named in advance, in Codex's words before
+the run: *a true +2 or +3 point edge could be economically interesting and still
+look like noise.* Reporting the cell as a hit would have been the single easiest
+mistake available in this whole program.
+
+### The two hurdles move in opposite directions
+
+This is the general lesson, and it closes the timeframe axis rather than one
+cell of it.
+
+| cell | economic bar | statistical hurdle | binding |
+|---|---|---|---|
+| 15m | 4.24 | 5.24 | statistical |
+| 30m | 3.07 | 8.65 | statistical |
+| 1h | 2.70 | 16.83 | statistical |
+
+Coarsening the timeframe lowers the economic bar and raises the statistical
+hurdle faster, because trade count falls with it. At 1h, three standard errors
+is +16.8 win-rate points — an effect size nothing in this program has ever
+approached. **The statistical hurdle binds at every timeframe, and coarsening
+makes the problem worse.** There is no timeframe on this instrument at which a
+marginal edge could be both real and detectable within the available history.
+
+### Two caveats on comparability
+
+Neither cell is a clean one-variable change from the 15m baseline.
+
+**1h collapses the entry and setup timeframes into one bar series**, since
+`setup` is already 1H, so the confluence mechanics change rather than only the
+entry scale. And `get_windowed_data()` allocates lookback by entry-bar count, so
+15m, 30m and 1h see roughly 10, 21 and 42 trading days of history and therefore
+different detector populations. Both are properties of the design, not faults,
+but they mean these rows are directional evidence rather than controlled
+comparisons.
+
+### What is now established
+
+1. **Costs were never the only problem.** They fell as predicted and the result
+   did not improve, which is the "costs only" branch registered before the run.
+2. **The timeframe axis is closed**, on power rather than on any single result.
+3. **68 configurations.** Nothing has cleared its bar at any scale.
+
+---
+
+## Experiment 29 — The OTE gate is the only thing holding the entry up (July 2026)
+
+One pre-registered cell, 20.5 min. The search on 15-minute ES stops here.
+
+### The published explanation was wrong
+
+Experiment 26 attributed a −2.0 point penalty to "a retracement entry into a
+fair value gap: entry against immediate momentum", and the next test was to drop
+the retracement and enter at market instead.
+
+**The code never waited.** `_find_fvg_ob_overlap` and `_find_fvg_entry` both
+`return current_price`. There is no limit order resting in the zone and nothing
+waits for price to come back. The strategy has always entered at market on the
+signal bar; the zone qualifies the setup and anchors the stop, nothing more. The
+measurement stood, the explanation for it did not.
+
+Codex also took the −2.0 apart. It came from an *unpaired* null, so it absorbs
+bar location, volatility regime, hour clustering, censoring — real entries are
+censored 5.8% against 15.8% for uniform sampling — and setup-conditioned
+geometry, with entry timing only the last of those. It is a diagnostic smell,
+not a measured defect, and not a quantity to go and fix.
+
+That left one honest question: do standalone FVG entries carry edge without the
+OTE gate? `entry_timing` in `backtest/rules.py` now selects it.
+
+### They carry a large negative one
+
+Same bias, same geometry, same span, same 30-seed paired null:
+
+| cell | trades | barrier n | WR | **edge** | sd | P(edge>0) | gross | net |
+|---|---|---|---|---|---|---|---|---|
+| `retracement` (exp 28) | 807 | 729 | 33.33 | **−0.22** | 0.72 | 37% | +$5,030 | −$52,113 |
+| `signal_bar` | 787 | 745 | **20.40** | **−5.07** | 0.67 | **0%** | **−$25,598** | −$87,611 |
+
+Sampling error on 745 barrier trades is 1.6 points, so −5.07 is **z ≈ −3.2**.
+After 65-plus configurations that produced nothing distinguishable from zero,
+the first result to clear |z| > 3 is an anti-edge.
+
+### The mechanism is displacement, not dilution
+
+The setup mix does not simply gain standalone FVGs, it loses the overlaps:
+
+| setup type | retracement | signal_bar |
+|---|---|---|
+| FVG+OB overlap | 663 | **106** |
+| FVG+OTE | 144 | 26 |
+| Fair Value Gap | 0 | **655** |
+
+The entry waterfall still tries FVG+OB overlap first, so the overlaps were not
+out-competed on quality. They were crowded out by the three-position concurrency
+cap: standalone FVGs fire far more often, take the slots, and the better setup
+finds no room when it arrives. Loosening a filter did not add marginal trades to
+the existing book. It replaced the book.
+
+That also explains the cost line. Cost per trade rises from $70.81 to $78.80 and
+gross turns negative, so costs are no longer eating a small edge — there is no
+gross edge left to eat.
+
+### Read what this does and does not say
+
+It does **not** say the OTE gate has edge. Experiment 26 measured FVG+OTE at
++0.4 points on 142 barrier trades, which is nothing. What it says is that the
+gate is doing real work as a *filter*: the population it excludes is
+significantly worse than random, so removing it makes the strategy worse than
+the coin flip it was already indistinguishable from.
+
+### The search stops here
+
+The stopping rule was registered before the run, on Codex's argument: near zero,
+negative, or merely +1 point means stop parameter search on 15-minute ES. It
+returned −5.07 at P(edge > 0) = 0%.
+
+Every cheap question from experiment 26 is now closed. Across 66 configurations
+nothing positive has ever been measured, the one figure that looked positive was
+one seed above a mean inside noise, and the only significant result is negative.
+What remains is not a sweep: a different instrument, a different horizon, or a
+different data source such as order flow.
+
+---
+
+## Experiment 28 — The only positive component in the program was a bug (July 2026)
+
+Runtime: 20.5 min to re-baseline, seconds for the rest. One code change, ten new
+tests, five predictions registered before the run and three red flags.
+
+### The question
+
+Experiment 27 found two faults in the day-trade cutoff at `engine.py:307`. The
+close fired only on a bar whose ET hour was 16, so on holidays and half-days
+with no such bar the position was carried for days; and nothing stopped an entry
+being taken during that hour. Fixing both and re-running experiment 26's cell
+says what the strategy looks like without them.
+
+### The fix
+
+The close now fires on the last bar at or before 16:00 ET on the bar's own CME
+session day, which works whether or not the cutoff bar traded. Entries at or
+after the cutoff are refused.
+
+Codex caught a bug in the fix before it was written. The obvious rule — close
+when the next bar belongs to a different session day — lands an hour late on
+every ordinary weekday, because after 17:00 ET the next bar is the 18:00 evening
+open and that already belongs to the next session day. The rule has to be
+anchored on the cutoff, not on the session boundary.
+
+Reading the next bar's timestamp to find the last one before the cutoff is not
+look-ahead: no price or volume is taken from it, and it stands in for the
+session calendar that live trading gets from a clock.
+
+### Every prediction held
+
+| registered before the run | before | after | |
+|---|---|---|---|
+| gross falls toward break-even | +$10,717.50 | **+$5,030.50** | pass |
+| trades drop by roughly 31 | 841 | **807** | pass |
+| no entry in the 16:00 ET hour | 31 | **0** | pass |
+| no trade spans a session day | 38 | **0** | pass |
+| longest hold becomes intraday | 119.2 h | **21.8 h** | pass |
+
+The remaining 21.8-hour hold is one session, not two: an entry on the 18:15 ET
+evening open held to the following 16:00 cutoff is 21.75 hours inside a single
+CME trading day. Cross-session holds are zero.
+
+All three red flags stayed down. Session-end gross did not rise ($29,900 →
+$29,712). No exit landed at 17:00 ET. Net got **worse**, −$49,142.50 →
+−$52,113.25, which is what fixing a rule that was handing out free profit should
+do.
+
+### The two resolvers now agree exactly
+
+Experiment 27's finding was that the engine and `Intrabar.first_touch` resolved
+the same trade differently on 40 of 841 trades, so the strategy and its
+benchmark were measured with different rulers. On the fixed run:
+
+| engine | first_touch | n |
+|---|---|---|
+| SL_HIT | SL_HIT | 486 |
+| TP_HIT | TP_HIT | 243 |
+| SESSION_END | none | 78 |
+
+**Zero disagreements out of 807.** `nullmodel.session_end()` needed no change
+after all: its calendar-day rule only diverged for entries after 16:00 ET, and
+those no longer exist. Every edge-against-null figure in this program is now
+measured on one ruler.
+
+### The +1.2 direction component does not survive
+
+Experiment 26 recorded a +1.2 win-rate-point direction edge and called it the
+first positive component measured anywhere in the program.
+
+A single paired null is one draw. At 6000 draws its win rate carries about 0.7
+points of noise, which is most of the effect being argued about, so the first
+version of this entry drew a conclusion from one seed and could not support it.
+Thirty seeds on each baseline, same geometry, same cutoff:
+
+| baseline | barrier n | strategy WR | null mean | **edge** | sd | range | P(edge > 0) |
+|---|---|---|---|---|---|---|---|
+| pre-fix | 764 | 34.16 | 33.55 | **+0.61** | 0.66 | −0.9 to +1.7 | 80% |
+| post-fix | 729 | 33.33 | 33.55 | **−0.22** | 0.72 | −1.6 to +1.3 | 37% |
+
+Two things fall straight out of that.
+
+**The null does not move.** 33.55 on both baselines, because the null was always
+resolved by `Intrabar.first_touch`, which was never the broken component. The
+whole change is on the strategy side: its win rate fell 0.83 points, from 261
+winners in 764 to 243 in 729, and the edge fell by the same 0.83. That is the
+arithmetic of the holiday carries — 14 of the 24 were TP hits a correctly-closed
+position never reaches.
+
+**The published +1.2 sits inside the pre-fix seed range.** It was a high draw
+from a distribution centred on +0.61, not a separate measurement. So the honest
+statement is narrower than "the +1.2 was a bug":
+
+- Under a matched paired null the pre-fix edge is **+0.61 ± 0.66**, not +1.2.
+  The published figure came from one favourable seed.
+- Fixing the cutoff moves the same measurement to **−0.22 ± 0.72**, and that
+  −0.83 shift is attributable to the fix, because the null is unchanged.
+- Neither figure is distinguishable from zero, and the bar is +3.5.
+
+What is established is therefore that **no positive direction edge survives**,
+and that the number previously treated as positive evidence was one seed above a
+mean that was already inside noise. It is not established that direction skill
+is negative.
+
+### The stop-width result survives on clean data
+
+Experiment 27's conclusion re-run against the fixed trades, target held at its
+original price:
+
+| stop | barrier n | WR | paired null | edge | z | bar | mean net R |
+|---|---|---|---|---|---|---|---|
+| actual 9.4 | 729 | 33.33 | 34.27 | −0.9 | −0.53 | 4.24 | −0.162 |
+| 15 | 689 | 45.43 | 46.04 | −0.6 | −0.32 | 3.14 | −0.082 |
+| 20 | 645 | 54.73 | 53.93 | +0.8 | 0.41 | 2.69 | −0.046 |
+| 30 | 593 | 64.25 | 65.10 | −0.9 | −0.43 | 2.10 | −0.056 |
+| 40 | 541 | 73.01 | 74.56 | −1.5 | −0.83 | 1.72 | −0.046 |
+| 60 | 459 | 87.58 | 88.22 | −0.6 | −0.42 | 1.28 | −0.034 |
+
+Same flat noisy line, max |z| 0.83, mean net R negative at every width. The
++3.5 selection artifact that appeared at a 60-point stop in the secondary table
+of experiment 27 is now +1.1, which is what a best-of-twelve artifact does when
+the data underneath it moves.
+
+### Two things this entry does not establish
+
+Recorded because the first draft claimed both, and a Codex review of the writeup
+was right to reject them.
+
+**That the fix caused a sign flip.** The pre-fix trades rescored with the same
+script already averaged +0.61, not +1.2. The fix moved it to −0.22. Both sit
+inside noise, so what moved is a mean, not a sign.
+
+**That the terminal bar is handled correctly.** `session_cutoff_masks` marks the
+last bar of any series as a session close, so a run that ends mid-session labels
+its final exit `SESSION_END` rather than something like `BACKTEST_END`. It is
+cosmetic here — one trade at the end of the span — but it is wrong, and the
+test at `tests/test_session_cutoff.py` currently locks the behaviour in.
+
+One test gap is also open. The ten isolation tests would all still pass if a
+future refactor moved the force-close below the `step_bars` skip in
+`_run_backtest_inner`, at which point `step_bars > 1` could skip a close bar and
+carry a position again. Nothing in `tests/` calls `run_backtest` at all, so the
+loop's ordering has no coverage.
+
+### What is now established
+
+1. **No positive direction edge survives.** −0.22 ± 0.72 over thirty seeds
+   against a bar of +3.5.
+2. **The strategy and its benchmark now resolve identically** on all 807 trades,
+   so future edge figures are comparisons of skill rather than of rulers.
+3. **Costs are 11.4 times gross.** $57,143.75 against +$5,030.50.
+
+The two open questions from experiment 26 are both closed. What remains needs a
+different instrument, a different data source such as order flow, or accepting
+that 15-minute ES is efficient at this horizon.
+
+---
+
+## Experiment 27 — A wider stop does not pay, and two session-end faults surface (July 2026)
+
+Configurations tried to date: **65**, plus twelve offline re-resolutions of
+experiment 26's own trades, which are twelve correlated looks and are priced as
+one family below. Runtime: 22 min to regenerate the trades, seconds to rescore.
+
+### The question
+
+Experiment 26 measured a +1.2 win-rate-point direction component at z 0.68. The
+break-even bar falls as `1.02 / stop_points`, from about +3.5 points at the
+observed 9.2-point stop to about +1.2 at 30. So the whole question is the shape
+of edge against stop width, and re-resolving the stored trades answers it
+without changing the population.
+
+Pre-registered before looking, after a Codex challenge that changed three things:
+
+- **Two counterfactuals, not one.** Holding each trade's target *multiple*
+  constant while widening the stop pushes the target price out too, so it tests
+  "does the signal work at the same shape, larger scale". The engine picks
+  targets from liquidity, and that price does not move because the stop moved.
+  The primary reading is therefore **fixed target price, stop widened alone**.
+- **Twelve looks are one family.** Requiring z > 3 per look is too loose on top
+  of 65 prior configurations. The threshold was set at max-z ≥ 3.4, and a
+  result had to show a plausible rise-plateau-fade shape rather than one point
+  clearing the bar.
+- **Censoring is reported, not assumed harmless.** The paired null shares the
+  16:00 cutoff but not necessarily the resolution *rate*: if correctly-directed
+  trades resolve at a different rate from wrongly-directed ones, conditioning on
+  resolution biases the direction edge itself. Mean net R over every trade,
+  closing the unresolved at the cutoff, avoids that conditioning.
+
+### The regeneration reproduces experiment 26 exactly
+
+841 trades, gross +$10,717.50, costs $59,860, 503 SL / 261 TP / 77 session-end,
+non-barrier +$25,492.50. Every headline figure matches. That is the fourth
+independent determinism check on this harness.
+
+### A wider stop does not pay
+
+Primary — target held at its original price, stop widened alone:
+
+| stop | barrier n | censored | WR | paired null | edge | z | bar | mean net R | t |
+|---|---|---|---|---|---|---|---|---|---|
+| actual 9.5 | 760 | 9.6% | 33.03 | 33.52 | **−0.5** | −0.29 | 4.21 | −0.177 | −3.60 |
+| 15 | 720 | 14.4% | 44.86 | 45.53 | **−0.7** | −0.36 | 3.14 | −0.094 | −2.38 |
+| 20 | 675 | 19.7% | 54.37 | 54.35 | **0.0** | 0.01 | 2.68 | −0.053 | −1.60 |
+| 30 | 612 | 27.2% | 64.71 | 65.43 | **−0.7** | −0.38 | 2.09 | −0.053 | −2.10 |
+| 40 | 560 | 33.4% | 73.21 | 74.58 | **−1.4** | −0.74 | 1.72 | −0.045 | −2.13 |
+| 60 | 476 | 43.4% | 87.61 | 87.55 | **+0.1** | 0.04 | 1.28 | −0.034 | −2.24 |
+
+Secondary — target multiple held, so the target widens with the stop:
+
+| stop | barrier n | censored | WR | paired null | edge | z | bar | mean net R | t |
+|---|---|---|---|---|---|---|---|---|---|
+| actual 9.5 | 760 | 9.6% | 33.03 | 33.52 | −0.5 | −0.29 | 4.21 | −0.177 | −3.60 |
+| 15 | 659 | 21.6% | 32.02 | 31.44 | +0.6 | 0.32 | 2.43 | −0.106 | −2.41 |
+| 20 | 542 | 35.6% | 31.00 | 30.30 | +0.7 | 0.35 | 1.82 | −0.073 | −1.86 |
+| 30 | 377 | 55.2% | 27.59 | 27.40 | +0.2 | 0.08 | 1.21 | −0.069 | −2.15 |
+| 40 | 246 | 70.7% | 23.17 | 24.54 | −1.4 | −0.50 | 0.91 | −0.062 | −2.30 |
+| 60 | 91 | 89.2% | 19.78 | 16.24 | **+3.5** | 0.92 | 0.61 | −0.042 | −2.15 |
+
+**The primary curve wobbles around zero.** Edge runs −0.5, −0.7, 0.0, −0.7,
+−1.4, +0.1 against a bar that falls from 4.21 to 1.28, and never approaches it.
+Max |z| is 0.74 against a threshold of 3.4. There is no rise, no plateau and no
+fade — it is the flat noisy line predicted under no real edge.
+
+The +3.5 at a 60-point stop in the secondary table is the selection artifact the
+pre-registration named in advance: 91 barrier trades out of 841, 89% censored,
+z 0.92. Best of twelve correlated looks, and it fails the family threshold by a
+factor of nearly four.
+
+**Mean net R is negative at every stop in both tables**, from −0.177 to −0.034,
+at t −1.6 to −3.6. That figure uses every trade and closes the unresolved at the
+cutoff, so it does not condition on resolution at all. A wider stop shrinks the
+loss per R because cost drag falls as `1.02 / stop`; it never turns it positive.
+
+**Backlog item 1 is dead.** The direction component does not grow with stop
+width, so the one positive number measured in this program has no economic value
+at any geometry.
+
+### The validation row failed, and that mattered more
+
+The rescore's actual-stop row should have reproduced experiment 26's barrier
+figures. It did not: 33.03% on 760 barrier trades against the engine's 34.16% on
+764. Same trades, same stops, same targets. The strategy win rate comes from the
+engine while every null in this program is resolved by `Intrabar.first_touch`,
+so a disagreement between those two resolvers is a difference of rulers, not of
+skill — and at 2.1% of trades on the figure that drives the win rate, it is
+larger than the effect being measured.
+
+Resolving all 841 trades both ways gives the disagreement directly:
+
+| engine | first_touch | n |
+|---|---|---|
+| SL_HIT | SL_HIT | 495 |
+| TP_HIT | TP_HIT | 247 |
+| SESSION_END | none | 59 |
+| SESSION_END | SL_HIT | 14 |
+| TP_HIT | none | 14 |
+| SL_HIT | none | 8 |
+| SESSION_END | TP_HIT | 4 |
+
+Forty of the 841 are outright class disagreements, **4.8%**. `SESSION_END → none`
+is agreement rather than a third class: both say no barrier was reached before
+the cutoff. Of the forty, eighteen change the win/loss verdict itself, which is
+2.1% and is what moves the barrier win rate.
+
+Two separate faults, both in the session-end close at `engine.py:307`.
+
+**A. The engine takes entries during the 16:00 ET hour.** The force-close runs
+before the entry logic on the same bar, and nothing stops an entry at the cutoff
+hour. 31 trades entered there, spread across all four 15-minute bars (7, 6, 7,
+11). Nineteen of them are the pure case — closed `SESSION_END` on the very next
+bar, $974 of costs for a 15-minute hold, net −$911. The remaining twelve ran to
+a barrier, 9 stops and 2 targets, and drag the whole group to $1,691 of costs
+and net −$5,719. The clean statement of the fault is the nineteen; the group
+figure describes every entry in that hour, which is a larger and looser claim.
+
+**B. The engine holds through market holidays.** The close fires only on a bar
+whose ET hour is 16. Databento omits minutes with no trade, and on a holiday or
+half-day session no such bar exists, so the position rides into later sessions.
+**37 of the 894 weekday sessions in the training span — 4.1% — have no 16:00 ET
+bar at all**: every US market holiday and half-day, Thanksgiving and the Friday
+after, Independence Day, Labor Day, Good Friday 2023, Juneteenth 2024, Christmas
+Eve. On each of those the close cannot fire. 24 trades were caught by it, median
+hold 20.6 hours, longest 119.2 — entered 2023-06-30, closed 2023-07-05, straight
+through Independence Day. The rest cluster on Thanksgiving 2022 and 2023.
+
+Fault B is the one that matters. Those 24 trades returned **+$9,958.50 gross**
+against the whole run's **+$10,717.50 gross**, and 14 of the 24 are TP hits.
+Nearly all of the gross profit in the run came from trades that broke the
+documented day-trade rule by running for days. It does not rescue the strategy —
+the run still lost 49.1% net — but any future configuration that looked
+gross-positive could have been reading this.
+
+The two sets overlap by one trade, so 54 of the 841 are affected.
+
+Both faults descend from the audit fix recorded at the top of this file, which
+replaced an unbounded `hour >= 16` with a bounded check. Bounding it was right.
+Anchoring it to the existence of a bar in that hour was not.
+
+### What this does not change
+
+The stop-width conclusion stands. Strategy and paired null share one resolver
+and one cutoff in the rescore, so the edge comparison is internally consistent
+even though the absolute win rates differ from the engine's.
+
+### What is now established
+
+1. **A wider stop does not pay.** Edge against a matched paired null is flat in
+   stop width at every geometry tested, and mean net R is negative at all of
+   them. The +1.2 direction component has no economic value.
+2. **The engine and the null model resolve the same trade differently** on 4.8%
+   of trades, 2.1% of them changing the win/loss verdict, for two reasons that
+   are now named and sized.
+3. **Twenty-four trades broke the day-trade rule** and supplied +$9,958.50 gross
+   against the whole run's +$10,717.50.
+
+Next: fix both faults and re-baseline. Fault A wants an entry guard at the
+cutoff hour; fault B wants the close driven by the session calendar rather than
+by a bar happening to exist. Neither has a test — `test_costs.py:75` checks what
+a session-end exit costs and `test_nullmodel.py:22` checks the `session_end()`
+helper, but nothing checks when the engine actually closes, which is why both
+survived the audit. Experiment 26's baseline has to be re-run afterwards,
+because 54 of its 841 trades are affected.
+
+### What Codex found in this writeup
+
+The review before implementation shaped the design. The review after it caught
+three errors in the numbers above, all corrected here: fault A was described as
+"opens on the 16:00 bar and closes on the next one" when the measured 31 are
+every entry in that hour and only 19 are next-bar stubs; the affected union was
+given as 55 when the two sets overlap by one trade; and the resolver
+disagreement was given as 3.5% when the matrix supports 4.8%, or 2.1% on the
+verdict-changing subset. It also supplied fault B's gross, which replaces a
+net-against-gross comparison that was not apples to apples. Claim 1, the
+stop-width result, it checked clean.
 
 ---
 

@@ -228,7 +228,22 @@ def _find_trade_levels(
             if leg != wanted:
                 in_ote = False
 
-        if in_ote or not is_futures(ticker):
+        # `entry_timing` decides whether a standalone FVG needs the OTE gate.
+        #
+        # Read the name carefully: it does not delay or advance a fill. Both
+        # entry helpers return `current_price`, so this strategy has always
+        # entered at market on the signal bar — there is no limit order resting
+        # in the zone and nothing waits for price to come back. The zone
+        # qualifies the setup and anchors the stop, nothing more. Experiment 26
+        # attributed a -2.0 point penalty to "a retracement entry into a fair
+        # value gap entering against immediate momentum"; the code does not do
+        # that, so the explanation was wrong even though the measurement stands.
+        #
+        # "retracement" keeps the OTE requirement for futures, which is the
+        # behaviour every result to date was produced under. "signal_bar" drops
+        # it, admitting standalone FVG setups that OTE currently filters out.
+        _needs_ote = params.get("entry_timing", "retracement") == "retracement"
+        if in_ote or not is_futures(ticker) or not _needs_ote:
             entry_price, stop_loss = _find_fvg_entry(direction, aligned_fvgs, current_price, atr, sl_mult)
             if entry_price:
                 setup_type = "FVG+OTE" if in_ote else "Fair Value Gap"

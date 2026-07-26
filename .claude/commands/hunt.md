@@ -34,24 +34,27 @@ label list or the results log is spent — pick a different one.**
 It must name a mechanism ("X subtracts edge because Y"), not nudge a parameter. It must
 be falsifiable by one sweep. Backlog, best first — strike through as spent:
 
-1. **The same trades at a 30-point stop.** Change nothing but the stop, so the
-   population stays experiment 26's. Cost drag is `1.02 / stop_points`, so the
-   break-even bar falls from +3.5 points to +1.2 — which is exactly where the measured
-   direction component sits. Run this first because it is the only test that asks
-   whether the one positive number in the program has any economic value, and it does
-   it without changing what is being measured. Its ceiling is break-even, not profit:
-   if the edge does not grow with the stop, items 2 to 5 are moot.
-2. **Market entry on the signal bar.** Keep the bias, drop the retracement wait.
-   Experiment 26 measured timing at −2.0 points and direction at +1.2; this tests
-   whether timing goes neutral. One cell, ~22 min.
-3. **Bias alone, no ICT trigger.** Every kill-zone bar with a directional bias, fixed
-   geometry, no FVG/OB requirement. Be honest about what this measures: the paired null
-   scores direction *at the strategy's own bars*, so removing the trigger changes the
-   population and no longer estimates the same +1.2. It answers a neighbouring
-   question — is the bias predictive at all — at n in the thousands, where z can clear 3.
-4. **Condition the direction component on time of day or session.** If the +1.2 lives
-   in one window, that is a rule; if it is flat, it is noise.
-5. **A different instrument or horizon.** Same code, new data. Costs its own download.
+~~1. The same trades at a 30-point stop.~~ **Spent — experiment 27.** Edge flat at
+   every width, max |z| 0.74, mean net R negative throughout.
+
+~~2. The +1.2 direction component.~~ **Spent — experiment 28.** It was an artifact of
+   two faults in the day-trade cutoff. On the fixed baseline it is −0.9 at z −0.53.
+   Items that assumed a positive component to build on are dead with it.
+
+1. **Market entry on the signal bar.** Keep the bias, drop the retracement wait.
+   Experiment 26 measured timing at −2.0 points; this tests whether that penalty goes
+   neutral. One cell, ~22 min. Note it now has no positive direction component to add
+   back, so a neutral result still leaves nothing.
+2. **Bias alone, no ICT trigger.** Every kill-zone bar with a directional bias, fixed
+   geometry, no FVG/OB requirement. The paired null scores direction *at the strategy's
+   own bars*, so removing the trigger changes the population — it answers a
+   neighbouring question, is the bias predictive at all, at n in the thousands where z
+   can clear 3.
+3. **A different instrument or horizon.** Same code, new data. Costs its own download.
+   After experiment 28 this is the honest front-runner: nothing positive has been
+   measured on 15-minute ES.
+4. **A different data source.** Order flow or similar. Outside what this repo can
+   currently load, so it is a decision rather than an experiment.
 
 Out of backlog → one research pass, 10 minutes, WebSearch/WebFetch (Exa MCP if it is
 loaded). Take mechanisms, not settings. Anyone posting a win rate without a matched
