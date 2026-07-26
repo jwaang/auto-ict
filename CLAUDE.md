@@ -449,6 +449,11 @@ When `TRADE_MANAGEMENT_ENABLED = True` in config (default: False):
 
 - `config.py` — All constants: risk %, ATR params, kill zone times, confluence weights, swing lengths, spread/slippage, trade management, per-asset SL multipliers
 - `ict/smc_patched.py` — Vendored + patched SMC library (no look-ahead bias). Do not modify.
+- `docs/ICT-ON-ES-CONCLUSIONS.md` — **start here.** What ICT concepts actually do
+  on ES: the scoreboard of every claim tested, the two findings that generalise
+  (zone is a category error, and every real effect is smaller than the spread),
+  why a directional edge is not a trading edge, and the eight measurement bugs —
+  seven of which made results look better than reality.
 - `docs/ICT-PRIMITIVES-REFERENCE.md` — **read before designing any primitive
   experiment.** What each primitive actually claims, the correct test for it, and
   the mistakes already made. Almost no ICT primitive is a directional signal that

@@ -4,6 +4,10 @@
 several experiments here measured claims ICT does not make, and one measured a
 mistake the source explicitly names.
 
+For the conclusions rather than the method, see
+**`docs/ICT-ON-ES-CONCLUSIONS.md`** — the scoreboard of every claim and the two
+findings that generalise.
+
 Sources: `docs/ICT_Trading_Strategies_Combined_Research.md`,
 `docs/ICT-STRATEGY-GUIDE.md`, and the innercircletrader.net tutorials on the fair
 value gap, valid FVGs, order blocks, breaker blocks, market structure shift,
