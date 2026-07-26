@@ -106,3 +106,60 @@ class TestFirstTouchCausality:
         low = np.array(lows, dtype=float)
         got = first_touch_by_band(high, low, 110, 90, from_idx=0, limit=10, n=4)
         assert got["<38.2"] == 1                          # 97 is 35% back up
+
+
+class TestGapDepth:
+    def test_bullish_gap_near_edge_is_the_top(self):
+        """A bullish gap sits below price, so price enters from the top."""
+        from research.depth_claims import gap_depth
+        assert gap_depth(110, top=110, bottom=100, bullish=True) == pytest.approx(0.0)
+        assert gap_depth(105, top=110, bottom=100, bullish=True) == pytest.approx(0.5)
+        assert gap_depth(100, top=110, bottom=100, bullish=True) == pytest.approx(1.0)
+
+    def test_bearish_gap_near_edge_is_the_bottom(self):
+        from research.depth_claims import gap_depth
+        assert gap_depth(100, top=110, bottom=100, bullish=False) == pytest.approx(0.0)
+        assert gap_depth(105, top=110, bottom=100, bullish=False) == pytest.approx(0.5)
+        assert gap_depth(110, top=110, bottom=100, bullish=False) == pytest.approx(1.0)
+
+    def test_beyond_the_far_edge_exceeds_one(self):
+        from research.depth_claims import gap_depth
+        assert gap_depth(95, top=110, bottom=100, bullish=True) == pytest.approx(1.5)
+
+    def test_zero_width_gap_is_not_a_number(self):
+        from research.depth_claims import gap_depth
+        d = gap_depth(100, top=100, bottom=100, bullish=True)
+        assert d != d
+
+
+class TestGapFirstTouch:
+    def _bars(self, lows):
+        return (np.array([x + 0.0 for x in lows]), np.array(lows, dtype=float))
+
+    def test_records_each_level_at_first_touch(self):
+        from research.depth_claims import first_touch_by_level
+        # Gap 100-110 bullish. Lows: 110 (0%), 105 (50%), 101 (90%).
+        high, low = self._bars([115, 110, 105, 101])
+        got = first_touch_by_level(high, low, 110, 100, True, from_idx=0, limit=10, n=4)
+        assert got["near edge"] == 1
+        assert got["CE 50%"] == 2
+        assert got["75%"] == 3
+
+    def test_nothing_before_the_third_candle(self):
+        """The gap is not knowable until its third candle closes."""
+        from research.depth_claims import first_touch_by_level
+        high, low = self._bars([100, 115, 115, 115])   # bar 0 is deep, pre-gap
+        got = first_touch_by_level(high, low, 110, 100, True, from_idx=0, limit=10, n=4)
+        assert got == {}
+
+    def test_a_single_bar_can_register_several_levels(self):
+        from research.depth_claims import first_touch_by_level
+        high, low = self._bars([115, 102])
+        got = first_touch_by_level(high, low, 110, 100, True, from_idx=0, limit=10, n=2)
+        assert {"near edge", "25%", "CE 50%", "75%"} <= set(got)
+
+    def test_stops_once_fully_mitigated(self):
+        from research.depth_claims import first_touch_by_level
+        high, low = self._bars([115, 95, 105])
+        got = first_touch_by_level(high, low, 110, 100, True, from_idx=0, limit=10, n=3)
+        assert got["mitigated"] == 1

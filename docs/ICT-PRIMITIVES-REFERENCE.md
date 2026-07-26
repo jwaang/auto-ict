@@ -155,10 +155,20 @@ First-presented FVG (session's first), inversion FVG, implied FVG, Balanced Pric
 Range (two opposite FVGs overlapping), breakaway gap (never filled), NWOG
 (weekend), NDOG (17:00-18:00 NY), SIBI/BISI naming.
 
-**Consequent Encroachment (CE)** — the 50% midpoint, the highest-probability
-reaction point *within* the gap. Its control is the rest of the same gap. Weakly
-positive (~+1 point) and untrusted: reaching the midpoint conditions on having
-travelled further.
+**Consequent Encroachment (CE)** — claimed as the 50% midpoint reaction point
+*within* the gap.
+
+**Status — refuted.** Measured at first touch of each level, n=168,171-195,066
+per level on 1m: near edge −0.08, 25% +0.75, **CE +0.82**, 75% +0.97, far edge
++0.96, **mitigated +1.51 (z +10.6)**. Monotone at every horizon, replicated on
+5m. The midpoint is not a peak, and the strongest region is the one ICT holds is
+no longer valid. Experiment 46.
+
+**Zone is the category error.** Together with OTE (experiment 45), two
+independent "zone" claims both turn out to be continuous gradients with depth
+that run straight through the boundary the methodology treats as a limit. Deeper
+genuinely is better — which is why the rules feel true — but no band or level is
+special.
 
 **IOFED** — entry at the gap's very edge, the earliest possible fill.
 

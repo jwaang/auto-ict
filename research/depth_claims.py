@@ -78,3 +78,46 @@ def first_touch_by_band(high, low, leg_start: float, leg_end: float,
         if depth > 1.0:
             break                            # leg invalidated, stop tracking
     return out
+
+
+# ---------------------------------------------------------------------------
+# Depth *inside a fair value gap*, for the consequent-encroachment claim.
+# ---------------------------------------------------------------------------
+
+GAP_LEVELS = [("near edge", 0.0), ("25%", 0.25), ("CE 50%", 0.5),
+              ("75%", 0.75), ("far edge", 1.0), ("mitigated", 1.0001)]
+
+
+def gap_depth(price: float, top: float, bottom: float, bullish: bool) -> float:
+    """How far into a gap price has travelled, 0 at the near edge, 1 at the far.
+
+    A bullish gap sits below price, so price returns *down* into it and the near
+    edge is the top. A bearish gap sits above, so the near edge is the bottom.
+    Above 1.0 the gap is fully mitigated.
+    """
+    span = top - bottom
+    if span <= 0:
+        return float("nan")
+    return (top - price) / span if bullish else (price - bottom) / span
+
+
+def first_touch_by_level(high, low, top: float, bottom: float, bullish: bool,
+                         from_idx: int, limit: int, n: int) -> dict:
+    """First bar index at which each gap level is reached.
+
+    Scanning starts strictly after `from_idx`, which is the gap's third candle —
+    the bar at which the gap becomes knowable. The relevant extreme of each bar
+    is the one furthest into the gap.
+    """
+    out = {}
+    for k in range(from_idx + 1, min(from_idx + 1 + limit, n)):
+        extreme = low[k] if bullish else high[k]
+        depth = gap_depth(extreme, top, bottom, bullish)
+        if depth != depth:
+            continue
+        for name, level in GAP_LEVELS:
+            if name not in out and depth >= level:
+                out[name] = k
+        if depth > 1.0:
+            break
+    return out

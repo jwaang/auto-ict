@@ -81,6 +81,66 @@ Last updated: July 2026.
 
 ---
 
+## Experiment 46 — Consequent encroachment is not a level either, and "zone" is the category error (July 2026)
+
+The largest samples in this programme — **168,171 to 195,066 per level** on
+1-minute — and a direct replication of experiment 45 on an independent claim.
+
+### CE is not a peak
+
+Continuation in the gap's direction, measured at the bar each level is **first
+reached** after the gap's third candle closes:
+
+| level | 1m h4 | 1m h12 | 1m h24 | 5m h4 |
+|---|---|---|---|---|
+| near edge | −0.08 | +0.04 | −0.01 | +0.31 |
+| 25% | +0.75 (z 6.2) | +0.51 (z 4.6) | +0.28 | +0.25 |
+| **CE 50%** | **+0.82 (z 7.0)** | **+0.57 (z 5.1)** | **+0.31 (z 3.1)** | +0.19 |
+| 75% | +0.97 (z 7.9) | +0.64 (z 5.5) | +0.36 (z 3.3) | +0.48 |
+| far edge | +0.96 (z 7.2) | +0.66 (z 5.6) | +0.40 (z 3.6) | +0.49 |
+| **mitigated >100%** | **+1.51 (z 10.6)** | **+0.99 (z 7.6)** | **+0.54 (z 4.5)** | **+0.59** |
+
+**Monotone at every horizon.** The 50% midpoint is beaten by 75%, by the far
+edge, and most sharply by the **fully mitigated** region — which the methodology
+holds is no longer valid at all. That is where the strongest number sits, at
+z +10.6.
+
+The 5-minute series shows the same ordering more weakly, with mitigated again
+highest, so the shape replicates on an independent timeframe.
+
+### Two zone claims, one category error
+
+Experiment 45 found the same thing for OTE: monotone with depth, no peak at
+61.8-79%, and the band ICT calls *invalidated* among the best. Experiment 46 now
+finds it for CE: monotone with depth, no peak at 50%, and the *mitigated* region
+best of all.
+
+**These are not two nulls. They are one finding.** ICT describes these as zones —
+a band or a level where price reacts — and in both cases the data shows a
+**continuous relationship with depth** that runs straight through the boundary
+the methodology treats as a limit. The mechanism is the same and it is mundane:
+the deeper price has travelled back, the more of the move is left to retrace in
+the expected direction.
+
+That also explains why practitioners believe it. Entering at CE genuinely does
+beat entering at the near edge (+0.82 against −0.08), and entering at 70% of a
+retracement genuinely does beat entering at 30%. The experience that produces the
+rule is real. The boundary it gets attached to is not.
+
+**Zone is the category error.** What exists is a gradient.
+
+### What this does not say
+
+It does not rescue the fair value gap as an entry — experiment 37 refuted the
+reaction against a matched control, and this measures only which depth inside a
+failing zone is least bad.
+
+And the magnitudes remain sub-spread: +0.8 to +1.5 points, against a 1.02-point
+round turn and structures of 1-3 points. Both experiments decide a *claim*, not a
+strategy.
+
+---
+
 ## Experiment 45 — OTE is not a zone: depth helps monotonically (July 2026)
 
 The first properly powered depth test — 22,916 to 33,444 samples per band on
